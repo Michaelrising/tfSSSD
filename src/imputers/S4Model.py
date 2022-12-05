@@ -30,9 +30,20 @@ _conj = lambda x: tf.concat([x, tf.math.conj(x)], axis=-1)
 # else:
 _resolve_conj = lambda x: tf.math.conj(x)
 
+def _c2r(c):
+    real = tf.math.real(c)
+    imag = tf.math.imag(c)
+    return tf.stack([real, imag], axis=-1)
+
+def _r2c(r):
+    real = r[..., :-1]
+    imag = r[..., -1:]
+    c = tf.complex(real, imag)
+    return tf.squeeze(c, -1)
+
 """ simple keras.Model components """
 
-def Activation(activation=None, dim=-1):
+def Activation(activation=None):
     if activation in [ None, 'id', 'identity', 'linear' ]:
         return tf.identity()
     elif activation == 'tanh':
@@ -43,8 +54,9 @@ def Activation(activation=None, dim=-1):
         return keras.activations.gelu()
     elif activation in ['swish', 'silu']:
         return keras.activations.silu()
-    elif activation == 'glu':
-        return keras.activations.glu(dim=dim)
+    # TODO GLU activation layer https://medium.com/deeplearningmadeeasy/glu-gated-linear-unit-21e71cd52081
+    # elif activation == 'glu':
+    #     return keras.activations.glu(dim=dim) # Gated LU is not implemented yet but we can self implement this late
     elif activation == 'sigmoid':
         return keras.activations.sigmoid()
     else:
@@ -61,15 +73,17 @@ def get_initializer(name, activation=None):
         raise NotImplementedError(f"get_initializer: activation {activation} not supported")
 
     if name == 'uniform':
-        initializer = partial(keras.initializers.HeUniform, nonlinearity=nonlinearity)
+        # initializer = partial(keras.initializers.HeUniform, nonlinearity=nonlinearity)
+        initializer = keras.initializers.HeUniform
     elif name == 'normal':
-        initializer = partial(keras.initializers.HeNormal, nonlinearity=nonlinearity)
+        initializer = keras.initializers.HeNormal
+        # initializer = partial(keras.initializers.HeNormal, nonlinearity=nonlinearity)
     elif name == 'xavier':
         initializer = keras.initializers.GlorotNormal
     elif name == 'zero':
-        initializer = partial(keras.initializers.Constant, val=0)
+        initializer = partial(keras.initializers.Constant, value=0)
     elif name == 'one':
-        initializer = partial(keras.initializers.Constant, val=1)
+        initializer = partial(keras.initializers.Constant, value=1)
     else:
         raise NotImplementedError(f"get_initializer: initializer type {name} not supported")
 
@@ -78,25 +92,37 @@ def get_initializer(name, activation=None):
 class TransposedLinear(keras.Model):
     """ Linear module on the second-to-last dimension """
 
-    def __init__(self, d_input, d_output, bias=True):
+    def __init__(self, d_input, d_output, initializer = None, bias=True):
         super().__init__()
 
         # self.weight = tf.Variable(tf.zeros(d_output, d_input))
-        initializer =  keras.initializers.HeUniform()
-        self.weight = initializer(shape=(d_output, d_input))
+        if initializer is None:
+            w_init =  keras.initializers.HeUniform()
+        else:
+            w_init = initializer
+        self.w = tf.Variable(
+            initial_value= w_init(shape=(d_input, d_output), dtype="float32"),
+            trainable=True,
+        )
         # keras.initializers.HeUniform(self.weight, a=math.sqrt(5)) # nn.Linear default init
         # nn.init.kaiming_uniform_(self.weight, nonlinearity='linear') # should be equivalent
 
         if bias:
             # self.bias = tf.Variable(tf.zeros(d_output, 1))
             bound = 1 / math.sqrt(d_input)
-            initializer = keras.initializers.RandomUniform(-bound, bound)
-            self.bias = initializer(shape=(d_output, 1))
-        else:
-            self.bias = 0.0
+            if initializer is None:
+                b_init = keras.initializers.RandomUniform(-bound, bound)
+            else:
+                b_init = initializer
+            self.b = tf.Variable(
+                initial_value=b_init(shape=(d_output,), dtype="float32"), trainable=True
+            )
 
-    def forward(self, x):
-        return contract('... u l, v u -> ... v l', x, self.weight) + self.bias
+        else:
+            self.b = 0.0
+
+    def call(self, x):
+        return  tf.matmul(x, self.w) + self.b  #contract('... u l, v u -> ... v l', x, self.w) + self.b
 
 def LinearActivation(
         d_input, d_output, bias=True,
@@ -108,31 +134,29 @@ def LinearActivation(
         weight_norm=False,
         **kwargs,
     ):
-    """ Returns a linear nn.Module with control over axes order, initialization, and activation """
+    """ Returns a linear keras.Model with control over axes order, initialization, and activation """
 
     # Construct core module
-    linear_cls = TransposedLinear if transposed else keras.layers.Dense
     if activation == 'glu': d_output *= 2
-    linear = linear_cls(d_input, d_output, bias=bias, **kwargs)
+    linear =  TransposedLinear(d_input, d_output, bias=bias, initializer=initializer) \
+        if transposed else keras.layers.Dense(units=d_output, kernel_initializer=initializer, activation=activation) #linear_cls(d_input, d_output, bias=bias, initializer=initializer, **kwargs)
 
     # Initialize weight
     if initializer is not None:
-        get_initializer(initializer, activation)(linear.weight)
+        initializer = get_initializer(initializer)
 
     # Initialize bias
     if bias and zero_bias_init:
-        nn.init.zeros_(linear.bias)
+        linear.bias = keras.initializers.Zeros(shape=(d_output, ), value=0)
 
     # Weight norm
-    if weight_norm:
-        linear = nn.utils.weight_norm(linear)
+    # if weight_norm:
+    #     linear = nn.utils.weight_norm(linear)
 
     if activate and activation is not None:
-        activation = Activation(activation, dim=-2 if transposed else -1)
-        linear = nn.Sequential(linear, activation)
+        activation = Activation(activation)
+        linear.add(keras.layers.Activation(activation))
     return linear
-
-
 
 
 def get_logger(name=__name__, level=logging.INFO) -> logging.Logger:
@@ -759,7 +783,8 @@ class SSKernelNPLR(keras.Model):
             # Check that the eigendedecomposition is correct
             # TODO 2-norm of two tensors in tensorflow
             if self.verbose:
-                print("Diagonalization error:", torch.dist(V @ torch.diag_embed(L) @ V_inv, self.dA))
+                print("Diagonalization error:", tf.norm(V @ tf.linalg.tensor_diag(L) @ V_inv - self.dA, ord='euclidean'))
+                # print("Diagonalization error:", torch.dist(V @ tf.linalg.tensor_diag(L) @ V_inv, self.dA))
 
             # Change the parameterization to diagonalize
             self.dA = L
