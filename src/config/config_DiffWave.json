@@ -1,0 +1,44 @@
+{
+    "diffusion_config":{
+        "T": 200,
+        "beta_0": 0.0001,
+        "beta_T": 0.02,
+        "device": "/gpu:0"
+    },
+    "wavenet_config": {
+        "in_channels": 14,
+        "out_channels": 14,
+        "num_res_layers": 36,
+        "res_channels": 256,
+        "skip_channels": 256,
+        "dilation_cycle": 12,
+        "diffusion_step_embed_dim_in": 128,
+        "diffusion_step_embed_dim_mid": 512,
+        "diffusion_step_embed_dim_out": 512,
+        "device":"/gpu:0"
+    },
+    "train_config": {
+        "output_directory": "../results/DiffWave/mujoco",
+        "log_directory": "../log/DiffWave/mujoco",
+        "ckpt_iter": "max",
+        "iters_per_ckpt": 100,
+        "iters_per_logging": 100,
+        "n_iters": 200000,
+        "learning_rate": 2e-4,
+        "only_generate_missing": 1,
+        "use_model": 0,
+        "masking": "bm",
+        "missing_k": 200,
+        "missing_rate": 0.1,
+        "device":"/gpu:0"
+    },
+    "trainset_config":{
+        "train_data_path": "../datasets/Mujoco/train_mujoco.npy",
+        "segment_length": 248,
+        "sampling_rate": 100
+    },
+    "gen_config":{
+        "output_directory": "../results/DiffWave/mujoco",
+        "ckpt_path": "../results/DiffWave/mujoco"
+    }
+}
