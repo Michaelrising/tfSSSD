@@ -5,6 +5,11 @@ from tensorflow import keras
 import random
 
 
+def tensor_assign(input_tensor: tf.Tensor, positions: list, values: tf.float32) -> tf.Tensor:
+    input_tensor = input_tensor.numpy()
+    input_tensor[tuple(positions)] = values
+    return input_tensor
+
 def flatten(v):
     """
     Flatten a list of lists/tuples
@@ -15,8 +20,7 @@ def flatten(v):
 
 def find_max_epoch(path):
     """
-    Find maximum epoch/iteration in path, formatted ${n_iter}.pkl
-    E.g. 100000.pkl
+    Find maximum epoch/iteration in path
 
     Parameters:
     path (str): checkpoint path
@@ -28,13 +32,8 @@ def find_max_epoch(path):
     files = os.listdir(path)
     epoch = -1
     for f in files:
-        if len(f) <= 4:
-            continue
-        if f[-4:] == '.pkl':
-            try:
-                epoch = max(epoch, int(f[:-4]))
-            except:
-                continue
+        epoch = max(epoch, int(f))
+
     return epoch
 
 
@@ -56,8 +55,8 @@ def std_normal(size, device):
     """
     Generate the standard Gaussian variable of a certain size
     """
-
-    return tf.random.normal(size).to(device)
+    with tf.device(device):
+        return tf.random.normal(size)
 
 
 def calc_diffusion_step_embedding(diffusion_steps, diffusion_step_embed_dim_in, device):
@@ -81,15 +80,14 @@ def calc_diffusion_step_embedding(diffusion_steps, diffusion_step_embed_dim_in, 
     half_dim = diffusion_step_embed_dim_in // 2
     _embed = np.log(10000) / (half_dim - 1)
     with tf.device(device):
-        _embed = tf.exp(tf.range(half_dim) * -_embed)
-        _embed = diffusion_steps * _embed
-    diffusion_step_embed = tf.concat((tf.math.sin(_embed),
-                                      tf.math.cos(_embed)), 1)
+        _embed = tf.exp(tf.range(half_dim, dtype=tf.float32) * tf.constant(-_embed, dtype=tf.float32))
+        _embed = tf.cast(diffusion_steps, _embed.dtype)* _embed
+    diffusion_step_embed = tf.concat((tf.math.sin(_embed),tf.math.cos(_embed)), 1)
 
     return diffusion_step_embed
 
 
-def calc_diffusion_hyperparams(T, beta_0, beta_T):
+def calc_diffusion_hyperparams(T, beta_0, beta_T, device):
     """
     Compute diffusion process hyperparameters
 
@@ -103,9 +101,9 @@ def calc_diffusion_hyperparams(T, beta_0, beta_T):
         T (int), Beta/Alpha/Alpha_bar/Sigma (torch.tensor on cpu, shape=(T, ))
         These cpu tensors are changed to cuda tensors on each individual gpu
     """
-
-    Beta = tf.linspace(beta_0, beta_T, T)  # Linear schedule
+    Beta = np.linspace(beta_0, beta_T, T)  # Linear schedule
     Alpha = 1 - Beta
+    # Alpha_bar, Beta_tilde = tf.py_function(alpha_beta_bar_assign, inp=[Alpha, Beta, T], Tout=Alpha.dtype)
     Alpha_bar = Alpha + 0
     Beta_tilde = Beta + 0
     for t in range(1, T):
@@ -113,7 +111,12 @@ def calc_diffusion_hyperparams(T, beta_0, beta_T):
         Beta_tilde[t] *= (1 - Alpha_bar[t - 1]) / (
                 1 - Alpha_bar[t])  # \tilde{\beta}_t = \beta_t * (1-\bar{\alpha}_{t-1})
         # / (1-\bar{\alpha}_t)
-    Sigma = tf.math.sqrt(Beta_tilde)  # \sigma_t^2  = \tilde{\beta}_t
+    with tf.device(device):
+        Beta = tf.convert_to_tensor(Beta)
+        Alpha = tf.convert_to_tensor(Alpha)
+        Alpha_bar = tf.convert_to_tensor(Alpha_bar)
+        Beta_tilde = tf.convert_to_tensor(Beta_tilde)
+        Sigma = tf.math.sqrt(Beta_tilde)  # \sigma_t^2  = \tilde{\beta}_t
 
     _dh = {}
     _dh["T"], _dh["Beta"], _dh["Alpha"], _dh["Alpha_bar"], _dh["Sigma"] = T, Beta, Alpha, Alpha_bar, Sigma
@@ -176,6 +179,7 @@ def training_loss(net, loss_fn, X, diffusion_hyperparams, only_generate_missing=
     Returns:
     training loss
     """
+    # net = tf.function(net)
     device = net.device
     _dh = diffusion_hyperparams
     T, Alpha_bar = _dh["T"], _dh["Alpha_bar"]
@@ -187,13 +191,13 @@ def training_loss(net, loss_fn, X, diffusion_hyperparams, only_generate_missing=
 
     B, C, L = audio.shape  # B is batchsize, C is the dimension of each audio, L is audio length
     with tf.device(device):
-        diffusion_steps = tf.random.uniform(shape=(B, 1, 1), maxval=T) # randomly sample diffusion steps from 1~T
+        diffusion_steps = tf.random.uniform(shape=(B,), maxval=T, dtype=tf.int32) # randomly sample diffusion steps from 1~T
 
     z = std_normal(audio.shape, device)
     if only_generate_missing == 1:
-        z = audio * tf.constant(mask, dtype=tf.float32) + z * (1. - tf.constant(mask, dtype=tf.float32))
-    transformed_X = tf.math.sqrt(Alpha_bar[diffusion_steps]) * audio + tf.math.sqrt(
-        1 - Alpha_bar[diffusion_steps]) * z  # compute x_t from q(x_t|x_0)
+        z = audio * mask + z * (1. - mask)
+    transformed_X = tf.cast(tf.math.sqrt(tf.reshape(tf.gather(Alpha_bar,diffusion_steps), shape=[B, 1, 1])), dtype=audio.dtype)* audio + tf.cast(tf.math.sqrt(
+        1 - tf.reshape(tf.gather(Alpha_bar,diffusion_steps), shape=[B, 1, 1])),dtype=z.dtype)* z  # compute x_t from q(x_t|x_0)
     epsilon_theta = net(
         (transformed_X, cond, mask, tf.reshape(diffusion_steps, shape=(B, 1)),))  # predict \epsilon according to \epsilon_\theta
 
@@ -203,20 +207,25 @@ def training_loss(net, loss_fn, X, diffusion_hyperparams, only_generate_missing=
         return loss_fn(epsilon_theta, z)
 
 
-def get_mask_rm(sample, k):
+def get_mask_rm(sample, k=None, rate=None):
     """Get mask of random points (missing at random) across channels based on k,
     where k == number of data points. Mask of sample's shape where 0's to be imputed, and 1's to preserved
     as per ts imputers"""
-
-    mask = tf.ones(sample.shape)
-    length_index = tf.constant(range(mask.shape[0]))  # lenght of series indexes
+    assert k is not None or rate is not None
+    mask = np.ones(sample.shape)
+    # mask = tf.Variable(mask_array, trainable=False)
+    length_index = np.arange(mask.shape[0]) # lenght of series indexes
     for channel in range(mask.shape[1]):
         # perm = torch.randperm(len(length_index))
-        perm = tf.random.experimental.index_shuffle(tf.range(len(length_index)), [0,1], len(length_index)-1)
-        idx = perm[0:k]
+        perm = np.random.permutation(len(length_index))
+        if rate is None:
+            idx = perm[0:k]
+        else:
+            sample_num = int(mask.shape[0]*rate)
+            idx = perm[0:sample_num]
         mask[:, channel][idx] = 0
 
-    return mask
+    return tf.convert_to_tensor(mask)
 
 
 def get_mask_mnr(sample, k):
@@ -224,14 +233,14 @@ def get_mask_mnr(sample, k):
     where k == number of segments. Mask of sample's shape where 0's to be imputed, and 1's to preserved
     as per ts imputers"""
 
-    mask = tf.ones(sample.shape)
-    length_index = tf.constant(range(mask.shape[0]))
-    list_of_segments_index = tf.split(length_index, length_index.shape[0]//k + 1)
+    mask = np.ones(sample.shape)
+    length_index = np.arange(mask.shape[0])
+    list_of_segments_index = np.array_split(length_index, length_index.shape[0]//k + 1)
     for channel in range(mask.shape[1]):
         s_nan = random.choice(list_of_segments_index)
         mask[:, channel][s_nan[0]:s_nan[-1] + 1] = 0
 
-    return mask
+    return tf.convert_to_tensor(mask)
 
 
 def get_mask_bm(sample, k):
@@ -239,11 +248,11 @@ def get_mask_bm(sample, k):
     where k == number of segments. Mask of sample's shape where 0's to be imputed, and 1's to be preserved
     as per ts imputers"""
 
-    mask = tf.ones(sample.shape)
-    length_index = tf.constant(range(mask.shape[0]))
-    list_of_segments_index = tf.split(length_index, length_index.shape[0]//k + 1)
+    mask = np.ones(sample.shape)
+    length_index = np.arange(mask.shape[0])
+    list_of_segments_index = np.array_split(length_index, length_index.shape[0]//k + 1)
     s_nan = random.choice(list_of_segments_index)
     for channel in range(mask.shape[1]):
         mask[:, channel][s_nan[0]:s_nan[-1] + 1] = 0
 
-    return mask
+    return tf.convert_to_tensor(mask)
