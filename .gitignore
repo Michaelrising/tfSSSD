@@ -4,3 +4,5 @@
 *.pb
 ./results
 ./log
+*.index
+*.lambda-dual.737831.0.v2
