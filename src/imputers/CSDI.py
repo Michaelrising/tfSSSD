@@ -18,17 +18,16 @@ import os
 
 
 
-def train(model, config, X, y, valid_loader=None, valid_epoch_interval=50, path_save="", log_dir=''):
+def train(model, config, trainData, valid_loader=None, valid_epoch_interval=50, path_save="", log_dir=''):
 
     output_path = f"{path_save}-model"
     p1 = int(0.75 * config["epochs"])
     p2 = int(0.9 * config["epochs"])
-    # lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[p1, p2], gamma=0.1)
     boundaries = [p1, p2]
     values = [config["lr"], config["lr"] * 0.1, config["lr"] * 0.1 * 0.1]
     learning_rate_fn = keras.optimizers.schedules.PiecewiseConstantDecay(boundaries, values)
     optimizer = keras.optimizers.Adam(learning_rate=learning_rate_fn, epsilon=1e-6)
-    loss =  keras.losses.MeanSquaredError()
+    loss = model.calc_loss # keras.losses.MeanSquaredError()
 
     best_valid_loss = 1e10
     tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
@@ -41,9 +40,10 @@ def train(model, config, X, y, valid_loader=None, valid_epoch_interval=50, path_
         mode='max',
         save_best_only=True,
     )
-
+    # prepare dataset
+    X
+    y
     # training
-    # net.build(input_shape=((model_config["in_channels"], None, ), (model_config["in_channels"], None, ), (model_config["in_channels"], None, ), (None,)))
     # net.summary()
     model.compile(optimizer=optimizer, loss=loss, metrics=['accuracy'])
     model.fit(
@@ -56,37 +56,6 @@ def train(model, config, X, y, valid_loader=None, valid_epoch_interval=50, path_
                    earlyStop_accu_call_back,
                    best_checkpoint_callback],
     )
-    for epoch_no in range(config["epochs"]):
-        avg_loss = 0
-        with tqdm(train_loader, mininterval=5.0, maxinterval=5.0) as it:
-            for batch_no, train_batch in enumerate(it, start=1):
-                with tf.GradientTape() as tape:
-                    tape.watch(model.trainable_variables)
-                    loss = model(train_batch)
-                grad = tape.gradient(loss, model.trainable_variables)
-                optimizer.apply_gradients(zip(grad, model.trainable_variables))
-                avg_loss += loss
-                del grad
-                it.set_postfix(
-                    ordered_dict={"avg_epoch_loss": avg_loss / batch_no,"epoch": epoch_no + 1},refresh=False)
-        model.save(output_path)
-# TODO evaluate in keras
-        # if valid_loader is not None and (epoch_no + 1) % valid_epoch_interval == 0:
-        #     model.eval()
-        #     avg_loss_valid = 0
-        #     with torch.no_grad():
-        #         with tqdm(valid_loader, mininterval=5.0, maxinterval=50.0) as it:
-        #             for batch_no, valid_batch in enumerate(it, start=1):
-        #                 loss = model(valid_batch, is_train=0)
-        #                 avg_loss_valid += loss.item()
-        #                 it.set_postfix(ordered_dict={"valid_avg_epoch_loss":avg_loss_valid/batch_no,"epoch":epoch_no},refresh=False)
-        #     if best_valid_loss > avg_loss_valid:
-        #         best_valid_loss = avg_loss_valid
-        #         print("\n best loss is updated to ",avg_loss_valid/batch_no,"at",epoch_no+1)
-        # try:
-        #   wandb.log({"loss_valid": avg_loss_valid / batch_no})
-        # except:
-        #   pass
 
     
 def quantile_loss(target, forecast, q: tf.float32, eval_points) -> tf.float32:
@@ -396,7 +365,7 @@ class ResidualBlock(keras.Model):
         return (x + residual) / math.sqrt(2.0), skip
 
 
-class CSDI_base(keras.Model):
+class CSDI(keras.Model):
     def __init__(self, target_dim, config, device):
         super().__init__()
         self.device = device
@@ -569,7 +538,7 @@ class CSDI_base(keras.Model):
             
         return imputed_samples
 
-    
+    @tf.function
     def call(self, batch, is_train=1):
         (observed_data,observed_mask,observed_tp,gt_mask,for_pattern_mask,_) = self.process_data(batch)
         if is_train == 0:
@@ -595,13 +564,8 @@ class CSDI_base(keras.Model):
                 
         return samples, observed_data, target_mask, observed_mask, observed_tp
 
-    
-class CSDI_Custom(CSDI_base):
-    def __init__(self, config, device, target_dim=35):
-        super(CSDI_Custom, self).__init__(target_dim, config, device)
-
     def process_data(self, batch):
-        observed_data = tf.cast(batch["observed_data"], dtype=tf.float32) #.to(self.device)
+        observed_data = tf.cast(batch["observed_data"], dtype=tf.float32)  # .to(self.device)
         observed_mask = tf.cast(batch["observed_mask"], dtype=tf.float32)
         observed_tp = tf.cast(batch["timepoints"], dtype=tf.float32)
         gt_mask = tf.cast(batch["gt_mask"], dtype=tf.float32)
@@ -613,8 +577,28 @@ class CSDI_Custom(CSDI_base):
         cut_length = tf.zeros(len(observed_data), dtype=tf.int64)
         for_pattern_mask = observed_mask
 
-        return (observed_data,observed_mask,observed_tp,gt_mask,for_pattern_mask,cut_length)
-    
+        return (observed_data, observed_mask, observed_tp, gt_mask, for_pattern_mask, cut_length)
+
+
+# class CSDI_Custom(CSDI_base, keras.Model):
+#     def __init__(self, config, device, target_dim=35):
+#         super(CSDI_Custom, self).__init__(target_dim, config, device)
+#
+#     def process_data(self, batch):
+#         observed_data = tf.cast(batch["observed_data"], dtype=tf.float32) #.to(self.device)
+#         observed_mask = tf.cast(batch["observed_mask"], dtype=tf.float32)
+#         observed_tp = tf.cast(batch["timepoints"], dtype=tf.float32)
+#         gt_mask = tf.cast(batch["gt_mask"], dtype=tf.float32)
+#
+#         observed_data = tf.transpose(observed_data, perm=[0, 2, 1])
+#         observed_mask = tf.transpose(observed_mask, perm=[0, 2, 1])
+#         gt_mask = tf.transpose(gt_mask, [0, 2, 1])
+#
+#         cut_length = tf.zeros(len(observed_data), dtype=tf.int64)
+#         for_pattern_mask = observed_mask
+#
+#         return (observed_data,observed_mask,observed_tp,gt_mask,for_pattern_mask,cut_length)
+#
     
 def mask_missing_train_rm(data, missing_ratio=0.0):
     observed_values = np.array(data)
@@ -681,74 +665,52 @@ def mask_missing_impute(data, mask):
     return observed_values, observed_masks, gt_masks
 
 # TODO Dataset class
-class Custom_Train_Dataset(tf.data.Dataset):
-    def __init__(self, series, path_save, variant_tensor, use_index_list=None, missing_ratio_or_k=0.0, masking='rm',
-                 ms=None):
-        super().__init__(variant_tensor)
-        self.series = series
-        self.length = series.shape[1]
-        self.n_channels = series.shape[2]
+def TrainDataset(series, path_save, missing_ratio_or_k=0.0, masking='rm'):
+    length = series.shape[1]
+    observed_values_list = []
+    observed_masks_list = []
+    gt_masks_list = []
 
-        self.observed_values = []
-        self.observed_masks = []
-        self.gt_masks = []
+    if not os.path.isfile(path_save):  # if datasetfile is none, create
+        for sample in series:
+            if masking == 'rm':
+                sample = sample.numpy()
+                observed_values, observed_masks, gt_masks = mask_missing_train_rm(sample, missing_ratio_or_k)
+                observed_values = tf.convert_to_tensor(observed_values)
+                observed_masks = tf.convert_to_tensor(observed_masks)
+                gt_masks = tf.convert_to_tensor(gt_masks)
+            elif masking == 'nrm':
+                sample = sample.numpy()
+                observed_values, observed_masks, gt_masks = mask_missing_train_nrm(sample, missing_ratio_or_k)
+                observed_values = tf.convert_to_tensor(observed_values)
+                observed_masks = tf.convert_to_tensor(observed_masks)
+                gt_masks = tf.convert_to_tensor(gt_masks)
+            elif masking == 'bm':
+                sample = sample.numpy()
+                observed_values, observed_masks, gt_masks = mask_missing_train_bm(sample, missing_ratio_or_k)
+                observed_values = tf.convert_to_tensor(observed_values)
+                observed_masks = tf.convert_to_tensor(observed_masks)
+                gt_masks = tf.convert_to_tensor(gt_masks)
 
-        if not os.path.isfile(path_save):  # if datasetfile is none, create
-            for sample in series:
-                if masking == 'rm':
-                    sample = sample.numpy()
-                    observed_values, observed_masks, gt_masks = mask_missing_train_rm(sample, missing_ratio_or_k)
-                    observed_values = tf.convert_to_tensor(observed_values)
-                    observed_masks = tf.convert_to_tensor(observed_masks)
-                    gt_masks = tf.convert_to_tensor(gt_masks)
-                elif masking == 'nrm':
-                    sample = sample.numpy()
-                    observed_values, observed_masks, gt_masks = mask_missing_train_nrm(sample, missing_ratio_or_k)
-                    observed_values = tf.convert_to_tensor(observed_values)
-                    observed_masks = tf.convert_to_tensor(observed_masks)
-                    gt_masks = tf.convert_to_tensor(gt_masks)
-                elif masking == 'bm':
-                    sample = sample.numpy()
-                    observed_values, observed_masks, gt_masks = mask_missing_train_bm(sample, missing_ratio_or_k)
-                    observed_values = tf.convert_to_tensor(observed_values)
-                    observed_masks = tf.convert_to_tensor(observed_masks)
-                    gt_masks = tf.convert_to_tensor(gt_masks)
-                    
-                self.observed_values.append(observed_values)
-                self.observed_masks.append(observed_masks)
-                self.gt_masks.append(gt_masks)
-                
-        
-        if use_index_list is None:
-            self.use_index_list = np.arange(len(self.observed_values))
-        else:
-            self.use_index_list = use_index_list
+            observed_values_list.append(observed_values)
+            observed_masks_list.append(observed_masks)
+            gt_masks_list.append(gt_masks)
+    observed_values_tensor = tf.stack(observed_values_list)
+    observed_masks_tensor = tf.stack(observed_masks_list)
+    gt_mask_tensor = tf.stack(gt_masks_list)
+    timepoints = tf.convert_to_tensor(np.arange(length))
 
-    def __getitem__(self, org_index):
-        index = self.use_index_list[org_index]
-        s = {
-            "observed_data": self.observed_values[index],
-            "observed_mask": self.observed_masks[index],
-            "gt_mask": self.gt_masks[index],
-            "timepoints": np.arange(self.length),
-        }
-        return s
-
-    def __len__(self):
-        return len(self.use_index_list)
+    return observed_values_tensor, observed_masks_tensor, gt_mask_tensor, timepoints
 
     
-class Custom_Impute_Dataset(tf.data.Dataset):
-    def __init__(self, series, mask, variant_tensor, use_index_list=None, path_save=''):
-        super().__init__(variant_tensor)
-        self.series = series
-        self.n_channels = series.shape[2]
-        self.length = series.shape[1]
-        self.mask = mask 
+def ImputeDataset(series, mask, path_save=''):
+        n_channels = series.shape[2]
+        length = series.shape[1]
+        mask = mask
 
-        self.observed_values = []
-        self.observed_masks = []
-        self.gt_masks = []
+        observed_values_list = []
+        observed_masks_list = []
+        gt_masks_list = []
 
         if not os.path.isfile(path_save):  # if datasetfile is none, create
             for sample in series:
@@ -760,70 +722,14 @@ class Custom_Impute_Dataset(tf.data.Dataset):
                 
                 #observed_values, observed_masks, gt_masks = mask_missing_impute(sample, mask)
                 
-                self.observed_values.append(sample)
-                self.observed_masks.append(observed_masks)
-                self.gt_masks.append(gt_masks)
+                observed_values_list.append(sample)
+                observed_masks_list.append(observed_masks)
+                gt_masks_list.append(gt_masks)
 
-                
-        if use_index_list is None:
-            self.use_index_list = np.arange(len(self.observed_values))
-        else:
-            self.use_index_list = use_index_list
-
-    def __getitem__(self, org_index):
-        index = self.use_index_list[org_index]
-        s = {
-            "observed_data": self.observed_values[index],
-            "observed_mask": self.observed_masks[index],
-            "gt_mask": self.gt_masks[index],
-            "timepoints": np.arange(self.length),
-        }
-        return s
-
-    def __len__(self):
-        return len(self.use_index_list)
-    
-    
-def get_dataloader_train_impute(series,
-                                batch_size=4,
-                                missing_ratio_or_k=0.1,
-                                train_split=0.7,
-                                valid_split=0.9,
-                                len_dataset=100,
-                                masking='rm',
-                               path_save='',
-                               ms=None):
-    indlist = np.arange(len_dataset)
-
-    tr_i, v_i, te_i = np.split(indlist,
-                               [int(len(indlist) * train_split),
-                                int(len(indlist) * (train_split + valid_split))])
-
-    train_dataset = Custom_Train_Dataset(series=series, use_index_list=tr_i,
-                                         missing_ratio_or_k=missing_ratio_or_k, 
-                                         masking=masking, path_save=path_save, ms=1)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-
-    valid_dataset = Custom_Train_Dataset(series=series, use_index_list=v_i, 
-                                         missing_ratio_or_k=missing_ratio_or_k, 
-                                         masking=masking, path_save=path_save)
-    valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=True)
-
-    test_dataset = Custom_Train_Dataset(series=series, use_index_list=te_i, 
-                                        missing_ratio_or_k=missing_ratio_or_k, 
-                                        masking=masking, path_save=path_save)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
-
-    return train_loader, valid_loader, test_loader
-
-
-def get_dataloader_impute(series, mask, batch_size=4, len_dataset=100):
-    indlist = np.arange(len_dataset)
-    impute_dataset = Custom_Impute_Dataset(series=series, use_index_list=indlist,mask=mask)
-    impute_loader = DataLoader(impute_dataset, batch_size=batch_size, shuffle=False)
-
-    return impute_loader
-
+        observed_values_tensor = tf.convert_to_tensor(np.stack(observed_values_list))
+        observed_masks_tensor = tf.convert_to_tensor(np.stack(observed_masks_list))
+        gt_masks_tensor = tf.convert_to_tensor(np.stack(gt_masks_list))
+        return observed_values_tensor, observed_masks_tensor, gt_masks_tensor
 
 
 class CSDIImputer:
@@ -936,22 +842,13 @@ class CSDIImputer:
             json.dump(config, f, indent=4)
 
 
-        train_loader, valid_loader, test_loader = get_dataloader_train_impute(
-            series=series,
-            train_split=config["train"]["train_split"],
-            valid_split=config["train"]["valid_split"],
-            len_dataset=series.shape[0],
-            batch_size=config["train"]["batch_size"],
-            missing_ratio_or_k=config["model"]["missing_ratio_or_k"],
-            masking=config['model']['masking'],
-            path_save=config['train']['path_save'])
+        train_data = TrainDataset(series, path_save, missing_ratio_or_k=0.0, masking='rm')
 
-        model = CSDI_Custom(config, self.device, target_dim=series.shape[2]) #.to(self.device)
+        model = CSDI(series.shape[2], config, self.device)
 # TODO keras compile fit and evaluate
         train(model=model,
               config=config["train"],
-              train_loader=train_loader,
-              valid_loader=valid_loader,
+              trainData=train_data,
               path_save=config['train']['path_save'])
 
         evaluate(model=model,
