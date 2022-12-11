@@ -18,49 +18,75 @@ import os
 
 
 
-def train(model, config, train_loader, valid_loader=None, valid_epoch_interval=50, path_save=""):
-    optimizer = Adam(model.parameters(), lr=config["lr"], weight_decay=1e-6)
-    output_path = f"{path_save}model.pth"
+def train(model, config, X, y, valid_loader=None, valid_epoch_interval=50, path_save="", log_dir=''):
 
+    output_path = f"{path_save}-model"
     p1 = int(0.75 * config["epochs"])
     p2 = int(0.9 * config["epochs"])
-    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[p1, p2], gamma=0.1)
+    # lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[p1, p2], gamma=0.1)
+    boundaries = [p1, p2]
+    values = [config["lr"], config["lr"] * 0.1, config["lr"] * 0.1 * 0.1]
+    learning_rate_fn = keras.optimizers.schedules.PiecewiseConstantDecay(boundaries, values)
+    optimizer = keras.optimizers.Adam(learning_rate=learning_rate_fn, epsilon=1e-6)
+    loss =  keras.losses.MeanSquaredError()
 
     best_valid_loss = 1e10
+    tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
+    earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=3)
+    earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='accuracy', mode='max', patience=3)
+    best_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+        filepath=path_save,
+        save_weights_only=False,
+        monitor='accuracy',
+        mode='max',
+        save_best_only=True,
+    )
+
+    # training
+    # net.build(input_shape=((model_config["in_channels"], None, ), (model_config["in_channels"], None, ), (model_config["in_channels"], None, ), (None,)))
+    # net.summary()
+    model.compile(optimizer=optimizer, loss=loss, metrics=['accuracy'])
+    model.fit(
+        x=X,
+        y=y,
+        batch_size=64,
+        epochs=1000,
+        callbacks=[tensorboard_callback,
+                   earlyStop_loss_callback,
+                   earlyStop_accu_call_back,
+                   best_checkpoint_callback],
+    )
     for epoch_no in range(config["epochs"]):
         avg_loss = 0
-        model.train()
         with tqdm(train_loader, mininterval=5.0, maxinterval=5.0) as it:
             for batch_no, train_batch in enumerate(it, start=1):
-                optimizer.zero_grad()
-                loss = model(train_batch)
-                loss.backward()
-                avg_loss += loss.item()
-                optimizer.step()
+                with tf.GradientTape() as tape:
+                    tape.watch(model.trainable_variables)
+                    loss = model(train_batch)
+                grad = tape.gradient(loss, model.trainable_variables)
+                optimizer.apply_gradients(zip(grad, model.trainable_variables))
+                avg_loss += loss
+                del grad
                 it.set_postfix(
                     ordered_dict={"avg_epoch_loss": avg_loss / batch_no,"epoch": epoch_no + 1},refresh=False)
-            lr_scheduler.step()
-          
-    
-        torch.save(model.state_dict(), output_path)
-
-
-        if valid_loader is not None and (epoch_no + 1) % valid_epoch_interval == 0:
-            model.eval()
-            avg_loss_valid = 0
-            with torch.no_grad():
-                with tqdm(valid_loader, mininterval=5.0, maxinterval=50.0) as it:
-                    for batch_no, valid_batch in enumerate(it, start=1):
-                        loss = model(valid_batch, is_train=0)
-                        avg_loss_valid += loss.item()
-                        it.set_postfix(ordered_dict={"valid_avg_epoch_loss":avg_loss_valid/batch_no,"epoch":epoch_no},refresh=False)
-            if best_valid_loss > avg_loss_valid:
-                best_valid_loss = avg_loss_valid
-                print("\n best loss is updated to ",avg_loss_valid/batch_no,"at",epoch_no+1)
-        try:
-          wandb.log({"loss_valid": avg_loss_valid / batch_no})
-        except:
-          pass
+        model.save(output_path)
+# TODO evaluate in keras
+        # if valid_loader is not None and (epoch_no + 1) % valid_epoch_interval == 0:
+        #     model.eval()
+        #     avg_loss_valid = 0
+        #     with torch.no_grad():
+        #         with tqdm(valid_loader, mininterval=5.0, maxinterval=50.0) as it:
+        #             for batch_no, valid_batch in enumerate(it, start=1):
+        #                 loss = model(valid_batch, is_train=0)
+        #                 avg_loss_valid += loss.item()
+        #                 it.set_postfix(ordered_dict={"valid_avg_epoch_loss":avg_loss_valid/batch_no,"epoch":epoch_no},refresh=False)
+        #     if best_valid_loss > avg_loss_valid:
+        #         best_valid_loss = avg_loss_valid
+        #         print("\n best loss is updated to ",avg_loss_valid/batch_no,"at",epoch_no+1)
+        # try:
+        #   wandb.log({"loss_valid": avg_loss_valid / batch_no})
+        # except:
+        #   pass
 
     
 def quantile_loss(target, forecast, q: tf.float32, eval_points) -> tf.float32:
@@ -83,7 +109,7 @@ def calc_quantile_CRPS(target, forecast, eval_points, mean_scaler, scaler):
         q_pred = []
         for j in range(len(forecast)):
             # TODO quantile
-            q_pred.append(torch.quantile(forecast[j: j + 1], quantiles[i], dim=1))
+            q_pred.append(np.quantile(forecast[j: j + 1], quantiles[i], axis=1)) # use numpy quantile here
         q_pred = tf.concat(q_pred, 0)
         q_loss = quantile_loss(target, q_pred, quantiles[i], eval_points)
         CRPS += q_loss / denom
@@ -170,42 +196,76 @@ def evaluate(model, test_loader, nsample=100, scaler=1, mean_scaler=0, path_save
     return all_generated_samples.cpu().numpy()
 
 # TODO transformer keras
+def transformer_encoder(inputs, head_size, num_heads, ff_dim, activation, dropout=0):
+    # Normalization and Attention
+    x = keras.layers.LayerNormalization(epsilon=1e-6)(inputs)
+    x = keras.layers.MultiHeadAttention(
+        key_dim=head_size, num_heads=num_heads, dropout=dropout
+    )(x, x)
+    x = keras.layers.Dropout(dropout)(x)
+    res = x + inputs
+
+    # Feed Forward Part
+    x = keras.layers.LayerNormalization(epsilon=1e-6)(res)
+    x = keras.layers.Conv1D(filters=ff_dim, kernel_size=1, activation=activation, data_format="channels_first")(x)
+    x = keras.layers.Dropout(dropout)(x)
+    x = keras.layers.Conv1D(filters=inputs.shape[-1], kernel_size=1, data_format="channels_first")(x)
+    return x + res
+
+def TransformerEncoder(
+    input_shape,
+    head_size,
+    num_heads,
+    ff_dim,
+    num_transformer_blocks,
+    mlp_units,
+    activation,
+    dropout=0,
+    mlp_dropout=0,
+):
+    inputs = keras.Input(shape=input_shape)
+    x = inputs
+    for _ in range(num_transformer_blocks):
+        x = transformer_encoder(x, head_size, num_heads, ff_dim, activation, dropout)
+
+    x = keras.layers.GlobalAveragePooling1D(data_format="channels_first")(x)
+    for dim in mlp_units:
+        x = keras.layers.Dense(dim, activation="relu")(x)
+        x = keras.layers.Dropout(mlp_dropout)(x)
+    outputs = keras.layers.Dense(n_classes, activation="softmax")(x)
+    return keras.Model(inputs, outputs)
+
+
 def get_torch_trans(heads=8, layers=1, channels=64):
-    encoder_layer = nn.TransformerEncoderLayer(
-        d_model=channels, nhead=heads, dim_feedforward=64, activation="gelu")
-    return nn.TransformerEncoder(encoder_layer, num_layers=layers)
+    return TransformerEncoder((channels, ),
+                              head_size=channels,
+                              num_heads=heads,
+                              ff_dim=64,
+                              num_transformer_blocks=layers,
+                              mlp_units=[],
+                              activation='gelu',
+                              )
+    # encoder_layer = nn.TransformerEncoderLayer(
+    #     d_model=channels, nhead=heads, dim_feedforward=64, activation="gelu")
+    # return nn.TransformerEncoder(encoder_layer, num_layers=layers)
 
 
-def Conv1d_with_init(in_channels, out_channels, kernel_size, initializer = None):
+def Conv1d_with_init(in_channels, out_channels, kernel_size, initializer=None, activation=None):
     if initializer is None:
         initializer = tf.keras.initializers.HeNormal()
-    layer = keras.layers.Conv1D(out_channels, kernel_size, data_format="channels_first", kernel_initializer=initializer)
+    layer = keras.layers.Conv1D(out_channels, kernel_size, data_format="channels_first", kernel_initializer=initializer, activation=activation)
     return layer
 
 def swish(x):
     return x * keras.activations.sigmoid(x)
 
-# class Conv(keras.Model):
-#     def __init__(self, in_channels, out_channels, kernel_size=3, dilation=1):
-#         super(Conv, self).__init__()
-#         self.padding = dilation * (kernel_size - 1) // 2
-#         # TODO only when this is the first layer that needs the input dim
-#         self.initializer = tf.keras.initializers.HeNormal()
-#         self.pad = keras.layers.ZeroPadding1D(padding=self.padding)
-#         self.conv = keras.layers.Conv1D(filters=out_channels, kernel_size=kernel_size, dilation_rate=dilation,
-#                                         kernel_initializer=self.initializer, data_format="channels_first")
-#         # self.conv = nn.Conv1d(in_channels, out_channels, kernel_size, dilation=dilation, padding=self.padding)
-#         self.conv = tfa.layers.WeightNormalization(self.conv, data_init=False)
-#         # nn.init.kaiming_normal_(self.conv.weight)
-#
-#     def call(self, x):
-#         x = tf.transpose(x, perm=[0, 2, 1])
-#         x = self.pad(x)
-#         x = tf.transpose(x, perm=[0, 2, 1])
-#         out = self.conv(x)
-#         return out
-#
 
+def _build_embedding(num_steps, dim=64):
+    steps = tf.expand_dims(tf.range(num_steps), 1)  # (T,1)
+    frequencies = 10.0 ** tf.expand_dims(tf.range(dim) / (dim - 1) * 4.0, 0)  # (1,dim)
+    table = steps * frequencies  # (T,dim)
+    table = tf.concat([tf.math.sin(table), tf.math.cos(table)], axis=1)  # (T,dim*2)
+    return table
 
 
 class DiffusionEmbedding(keras.Model):
@@ -214,11 +274,7 @@ class DiffusionEmbedding(keras.Model):
         if projection_dim is None:
             projection_dim = embedding_dim
         # TODO persistent?
-        setattr(self, "embedding", tf.Variable(self._build_embedding(num_steps, embedding_dim / 2), name="embedding", trainable=False))
-        self.register_buffer(
-            "embedding",
-            self._build_embedding(num_steps, embedding_dim / 2),
-            persistent=False)
+        setattr(self, "embedding", tf.Variable(_build_embedding(num_steps, int(embedding_dim / 2)), name="embedding", trainable=False))
         self.projection = keras.Sequential()
         self.projection.add(keras.layers.Dense(projection_dim, activation=swish))
         self.projection.add(keras.layers.Dense(projection_dim, activation=swish))
@@ -226,20 +282,9 @@ class DiffusionEmbedding(keras.Model):
     def call(self, diffusion_step):
         x = self.embedding[diffusion_step]
         x = self.projection(x)
-        # x = self.projection1(x)
-        # x = F.silu(x)
-        # x = self.projection2(x)
-        # x = F.silu(x)
         return x
 
-    def _build_embedding(self, num_steps, dim=64):
-        steps = tf.expand_dims(tf.range(num_steps), 1)  # (T,1)
-        frequencies = 10.0 ** tf.expand_dims(tf.range(dim) / (dim - 1) * 4.0, 0)  # (1,dim)
-        table = steps * frequencies  # (T,dim)
-        table = tf.concat([tf.math.sin(table), tf.math.cos(table)], axis=1)  # (T,dim*2)
-        return table
 
-    
 class diff_CSDI(keras.Model):
     def __init__(self, config, inputdim=2):
         super().__init__()
@@ -249,22 +294,10 @@ class diff_CSDI(keras.Model):
             num_steps=config["num_steps"],
             embedding_dim=config["diffusion_embedding_dim"])
 
-        self.input_projection = Conv1d_with_init(inputdim, self.channels, 1)
-        self.output_projection1 = Conv1d_with_init(self.channels, self.channels, 1)
+        self.input_projection = Conv1d_with_init(inputdim, self.channels, 1, activation='relu')
+        self.output_projection1 = Conv1d_with_init(self.channels, self.channels, 1, activation='relu')
         self.output_projection2 = Conv1d_with_init(self.channels, 1, 1,  tf.keras.initializers.Zeros())
-        # nn.init.zeros_(self.output_projection2.weight)
-        #
-        # self.residual_layers = nn.ModuleList(
-        #     [
-        #         ResidualBlock(
-        #             side_dim=config["side_dim"],
-        #             channels=self.channels,
-        #             diffusion_embedding_dim=config["diffusion_embedding_dim"],
-        #             nheads=config["nheads"],
-        #         )
-        #         for _ in range(config["layers"])
-        #     ]
-        # )
+
         self.residual_layers =[]
         for _ in range(config["layers"]):
             self.residual_layers.append(
@@ -276,12 +309,11 @@ class diff_CSDI(keras.Model):
                 )
             )
 
-    def forward(self, x, cond_info, diffusion_step):
+    def call(self, x, cond_info, diffusion_step):
         B, inputdim, K, L = x.shape
 
         x = tf.reshape(x, [B, inputdim, K * L])
         x = self.input_projection(x)
-        x = F.relu(x)
         x = tf.reshape(x, [B, self.channels, K, L])
 
         diffusion_emb = self.diffusion_embedding.call(diffusion_step)
@@ -291,10 +323,9 @@ class diff_CSDI(keras.Model):
             x, skip_connection = layer.all(x, cond_info, diffusion_emb)
             skip.append(skip_connection)
 
-        x = tf.reduce_sum(tf.stack(skip), axis=0) / math.sqrt(len(self.residual_layers))
+        x = tf.reduce_sum(tf.stack(skip), axis=0) / tf.math.sqrt(len(self.residual_layers))
         x = tf.reshape(x, [B, self.channels, K * L])
         x = self.output_projection1(x)  # (B,channel,K*L)
-        x = F.relu(x)
         x = self.output_projection2(x)  # (B,1,K*L)
         x = tf.reshape(x,[B, K, L])
         return x
@@ -347,19 +378,18 @@ class ResidualBlock(keras.Model):
         y = self.forward_time(y, base_shape)
         y = self.forward_feature(y, base_shape)  # (B,channel,K*L)
         y = self.mid_projection(y)  # (B,2*channel,K*L)
-        
-        
+
         _, cond_dim, _, _ = cond_info.shape
-        cond_info = cond_info.reshape(B, cond_dim, K * L)
+        cond_info = tf.reshape(cond_info, [B, cond_dim, K * L])
         cond_info = self.cond_projection(cond_info)  # (B,2*channel,K*L)
         y = y + cond_info
 
         
-        gate, filter = torch.chunk(y, 2, dim=1)
+        gate, filter = tf.split(y, 2, axis=1)
         y = tf.math.sigmoid(gate) * tf.math.tanh(filter)  # (B,channel,K*L)
         y = self.output_projection(y)
 
-        residual, skip = torch.chunk(y, 2, dim=1)
+        residual, skip = tf.split(y, 2, axis=1)
         x = tf.reshape(x, base_shape)
         residual = tf.reshape(residual, base_shape)
         skip = tf.reshape(skip, base_shape)
@@ -380,7 +410,7 @@ class CSDI_base(keras.Model):
         self.emb_total_dim = self.emb_time_dim + self.emb_feature_dim
         if self.is_unconditional == False:
             self.emb_total_dim += 1  # for conditional mask
-        self.embed_layer = nn.Embedding(num_embeddings=self.target_dim, embedding_dim=self.emb_feature_dim)
+        self.embed_layer = keras.layers.Embedding(inout_dim=self.target_dim, output_dim=self.emb_feature_dim)
 
         config_diff = config["diffusion"]
         config_diff["side_dim"] = self.emb_total_dim
@@ -397,7 +427,6 @@ class CSDI_base(keras.Model):
 
         self.alpha_hat = 1 - self.beta
         self.alpha = tf.math.cumprod(self.alpha_hat) # TODO numpy default is flattened need to check shape
-        # TODO expand two dims
         self.alpha_tf = tf.expand_dims(tf.expand_dims(tf.cast(self.alpha, dtype=tf.float32), 1), 1)
 
     def time_embedding(self, pos, d_model=128):
@@ -407,16 +436,17 @@ class CSDI_base(keras.Model):
         pe[:, :, 0::2] = tf.math.sin(position * div_term)
         pe[:, :, 1::2] = tf.math.cos(position * div_term)
         return pe
-# TODO
+
     def get_randmask(self, observed_mask):
-        rand_for_mask = torch.rand_like(observed_mask) * observed_mask
-        rand_for_mask = tf.reshape(rand_for_mask, [len(rand_for_mask), -1])
+        rand_for_mask = np.random.uniform(observed_mask.shape) * observed_mask
+        rand_for_mask = np.reshape(rand_for_mask, [len(rand_for_mask), -1])
         for i in range(len(observed_mask)):
             sample_ratio = np.random.rand()  
-            num_observed = observed_mask[i].sum().item()
+            num_observed = (observed_mask[i]).sum().item()
             num_masked = round(num_observed * sample_ratio)
             rand_for_mask[i][rand_for_mask[i].topk(num_masked).indices] = -1
-        cond_mask = (rand_for_mask > 0).reshape(observed_mask.shape).float()
+        cond_mask = tf.reshape(tf.convert_to_tensor(rand_for_mask > 0), observed_mask.shape)
+        cond_mask = tf.cast(cond_mask, dtype=tf.float32)
         return cond_mask
 
     def get_hist_mask(self, observed_mask, for_pattern_mask=None):
@@ -540,7 +570,7 @@ class CSDI_base(keras.Model):
         return imputed_samples
 
     
-    def forward(self, batch, is_train=1):
+    def call(self, batch, is_train=1):
         (observed_data,observed_mask,observed_tp,gt_mask,for_pattern_mask,_) = self.process_data(batch)
         if is_train == 0:
             cond_mask = gt_mask
@@ -555,13 +585,13 @@ class CSDI_base(keras.Model):
 # TODO evaluate
     def evaluate(self, batch, n_samples):
         (observed_data,observed_mask,observed_tp,gt_mask,_,cut_length) = self.process_data(batch)
-        with torch.no_grad():
-            cond_mask = gt_mask
-            target_mask = observed_mask - cond_mask
-            side_info = self.get_side_info(observed_tp, cond_mask)
-            samples = self.impute(observed_data, cond_mask, side_info, n_samples)
-            for i in range(len(cut_length)):  
-                target_mask[i, ..., 0: cut_length[i].item()] = 0
+        # with torch.no_grad():
+        cond_mask = gt_mask
+        target_mask = observed_mask - cond_mask
+        side_info = self.get_side_info(observed_tp, cond_mask)
+        samples = self.impute(observed_data, cond_mask, side_info, n_samples)
+        for i in range(len(cut_length)):
+            target_mask[i, ..., 0: cut_length[i].item()] = 0
                 
         return samples, observed_data, target_mask, observed_mask, observed_tp
 
@@ -651,36 +681,38 @@ def mask_missing_impute(data, mask):
     return observed_values, observed_masks, gt_masks
 
 # TODO Dataset class
-class Custom_Train_Dataset(Dataset):
-    def __init__(self, series, path_save, use_index_list=None, missing_ratio_or_k=0.0, masking='rm', ms=None):
+class Custom_Train_Dataset(tf.data.Dataset):
+    def __init__(self, series, path_save, variant_tensor, use_index_list=None, missing_ratio_or_k=0.0, masking='rm',
+                 ms=None):
+        super().__init__(variant_tensor)
         self.series = series
-        self.length = series.size(1)
-        self.n_channels = series.size(2)
+        self.length = series.shape[1]
+        self.n_channels = series.shape[2]
 
         self.observed_values = []
         self.observed_masks = []
         self.gt_masks = []
 
-        if not os.path.isfile(path):  # if datasetfile is none, create
+        if not os.path.isfile(path_save):  # if datasetfile is none, create
             for sample in series:
                 if masking == 'rm':
-                    sample = sample.detach().cpu().numpy()
+                    sample = sample.numpy()
                     observed_values, observed_masks, gt_masks = mask_missing_train_rm(sample, missing_ratio_or_k)
-                    observed_values = torch.from_numpy(observed_values).cuda()
-                    observed_masks = torch.from_numpy(observed_masks).cuda()
-                    gt_masks = torch.from_numpy(gt_masks).cuda()
+                    observed_values = tf.convert_to_tensor(observed_values)
+                    observed_masks = tf.convert_to_tensor(observed_masks)
+                    gt_masks = tf.convert_to_tensor(gt_masks)
                 elif masking == 'nrm':
-                    sample = sample.detach().cpu().numpy()
+                    sample = sample.numpy()
                     observed_values, observed_masks, gt_masks = mask_missing_train_nrm(sample, missing_ratio_or_k)
-                    observed_values = torch.from_numpy(observed_values).cuda()
-                    observed_masks = torch.from_numpy(observed_masks).cuda()
-                    gt_masks = torch.from_numpy(gt_masks).cuda()
+                    observed_values = tf.convert_to_tensor(observed_values)
+                    observed_masks = tf.convert_to_tensor(observed_masks)
+                    gt_masks = tf.convert_to_tensor(gt_masks)
                 elif masking == 'bm':
-                    sample = sample.detach().cpu().numpy()
+                    sample = sample.numpy()
                     observed_values, observed_masks, gt_masks = mask_missing_train_bm(sample, missing_ratio_or_k)
-                    observed_values = torch.from_numpy(observed_values).cuda()
-                    observed_masks = torch.from_numpy(observed_masks).cuda()
-                    gt_masks = torch.from_numpy(gt_masks).cuda()
+                    observed_values = tf.convert_to_tensor(observed_values)
+                    observed_masks = tf.convert_to_tensor(observed_masks)
+                    gt_masks = tf.convert_to_tensor(gt_masks)
                     
                 self.observed_values.append(observed_values)
                 self.observed_masks.append(observed_masks)
@@ -706,21 +738,22 @@ class Custom_Train_Dataset(Dataset):
         return len(self.use_index_list)
 
     
-class Custom_Impute_Dataset(Dataset):
-    def __init__(self, series, mask, use_index_list=None, path_save=''):
+class Custom_Impute_Dataset(tf.data.Dataset):
+    def __init__(self, series, mask, variant_tensor, use_index_list=None, path_save=''):
+        super().__init__(variant_tensor)
         self.series = series
-        self.n_channels = series.size(2)
-        self.length = series.size(1)
+        self.n_channels = series.shape[2]
+        self.length = series.shape[1]
         self.mask = mask 
 
         self.observed_values = []
         self.observed_masks = []
         self.gt_masks = []
 
-        if not os.path.isfile(path):  # if datasetfile is none, create
+        if not os.path.isfile(path_save):  # if datasetfile is none, create
             for sample in series:
                 
-                sample = sample.detach().cpu().numpy()
+                sample = sample.numpy()
                 observed_masks = sample.copy()
                 observed_masks[observed_masks!=0] = 1 
                 gt_masks = mask
@@ -914,7 +947,7 @@ class CSDIImputer:
             path_save=config['train']['path_save'])
 
         model = CSDI_Custom(config, self.device, target_dim=series.shape[2]) #.to(self.device)
-
+# TODO keras compile fit and evaluate
         train(model=model,
               config=config["train"],
               train_loader=train_loader,
@@ -975,7 +1008,8 @@ class CSDIImputer:
 
         model = CSDI_Custom(config, self.device, target_dim=self.series_impute.shape[2]) #.to(self.device)
 
-        model.load_state_dict(torch.load((self.path_load_model_dic)))
+        # model.load_state_dict(torch.load((self.path_load_model_dic)))
+        model.load(self.path_load_model_dic)
 
         imputations = evaluate(model=model,
                                 test_loader=test_loader,
