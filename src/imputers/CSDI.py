@@ -258,12 +258,13 @@ class tfCSDI(keras.Model):
 
         return imputed_samples
 
-    def train_step(self, observed_data, observed_mask, gt_mask):
-        # observed_data, observed_mask, gt_mask = batch
+# TODO Train STEP
+    def train_step(self, batch):
+        observed_data, observed_mask, gt_mask = batch[0]
         timepoints = tf.range(observed_data.shape[1])
         batch = (observed_data, observed_mask, gt_mask, timepoints)
         is_train = 1
-        observed_data, observed_mask, observed_tp, gt_mask, for_pattern_mask, _ = self.process_data(batch)
+        observed_data, observed_mask, observed_tp, gt_mask, for_pattern_mask = self.process_data(batch)
         if is_train == 0:
             cond_mask = gt_mask
         elif self.target_strategy != "random":
@@ -309,9 +310,9 @@ class tfCSDI(keras.Model):
         observed_mask = tf.transpose(observed_mask, perm=[0, 2, 1])
         gt_mask = tf.transpose(gt_mask, [0, 2, 1])
 
-        cut_length = tf.zeros(len(observed_data), dtype=tf.int64)
+        # cut_length = tf.zeros(observed_data.shape[0], dtype=tf.int64)
         for_pattern_mask = observed_mask
 
-        return observed_data, observed_mask, observed_tp, gt_mask, for_pattern_mask, cut_length
+        return observed_data, observed_mask, observed_tp, gt_mask, for_pattern_mask #, cut_length
 
 

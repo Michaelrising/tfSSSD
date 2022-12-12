@@ -137,7 +137,7 @@ class CSDIImputer:
                                   masking='rm')  # observed_values_tensor, observed_masks_tensor, gt_mask_tensor, timepoints
 
         model.compile(optimizer=optimizer)
-        history = model.fit(x=train_data, epochs=100, validation_split=0.1,
+        history = model.fit(x=train_data, batch_size=64, epochs=100, validation_split=0.1,
                                 callbacks=[tensorboard_callback,
                                          earlyStop_loss_callback,
                                          earlyStop_accu_call_back,
