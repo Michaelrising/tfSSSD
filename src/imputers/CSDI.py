@@ -129,32 +129,32 @@ class tfCSDI(keras.Model):
         pe[:, :, 1::2] = tf.math.cos(position * div_term)
         return pe
 
-    def get_randmask(self, observed_mask):
-        rand_for_mask = np.random.uniform(observed_mask.shape) * observed_mask
-        rand_for_mask = np.reshape(rand_for_mask, [len(rand_for_mask), -1])
-        for i in range(len(observed_mask)):
-            sample_ratio = np.random.rand()
-            num_observed = (observed_mask[i]).sum().item()
-            num_masked = round(num_observed * sample_ratio)
-            rand_for_mask[i][rand_for_mask[i].topk(num_masked).indices] = -1
-        cond_mask = tf.reshape(tf.convert_to_tensor(rand_for_mask > 0), observed_mask.shape)
-        cond_mask = tf.cast(cond_mask, dtype=tf.float32)
-        return cond_mask
+    # def get_randmask(self, observed_mask):
+    #     rand_for_mask = np.random.uniform(observed_mask.shape) * observed_mask
+    #     rand_for_mask = np.reshape(rand_for_mask, [len(rand_for_mask), -1])
+    #     for i in range(len(observed_mask)):
+    #         sample_ratio = np.random.rand()
+    #         num_observed = (observed_mask[i]).sum().item()
+    #         num_masked = round(num_observed * sample_ratio)
+    #         rand_for_mask[i][rand_for_mask[i].topk(num_masked).indices] = -1
+    #     cond_mask = tf.reshape(tf.convert_to_tensor(rand_for_mask > 0), observed_mask.shape)
+    #     cond_mask = tf.cast(cond_mask, dtype=tf.float32)
+    #     return cond_mask
 
-    def get_hist_mask(self, observed_mask, for_pattern_mask=None):
-        if for_pattern_mask is None:
-            for_pattern_mask = observed_mask
-        if self.target_strategy == "mix":
-            rand_mask = self.get_randmask(observed_mask)
-        # TODO tensor assignment
-        cond_mask = tf.identity(observed_mask)
-        for i in range(len(cond_mask)):
-            mask_choice = np.random.rand()
-            if self.target_strategy == "mix" and mask_choice > 0.5:
-                cond_mask[i] = rand_mask[i]
-            else:
-                cond_mask[i] = cond_mask[i] * for_pattern_mask[i - 1]
-        return cond_mask
+    # def get_hist_mask(self, observed_mask, for_pattern_mask=None):
+    #     if for_pattern_mask is None:
+    #         for_pattern_mask = observed_mask
+    #     if self.target_strategy == "mix":
+    #         rand_mask = self.get_randmask(observed_mask)
+    #     # TODO tensor assignment
+    #     cond_mask = tf.identity(observed_mask)
+    #     for i in range(len(cond_mask)):
+    #         mask_choice = np.random.rand()
+    #         if self.target_strategy == "mix" and mask_choice > 0.5:
+    #             cond_mask[i] = rand_mask[i]
+    #         else:
+    #             cond_mask[i] = cond_mask[i] * for_pattern_mask[i - 1]
+    #     return cond_mask
 
     def get_side_info(self, observed_tp, cond_mask):
 
@@ -260,17 +260,8 @@ class tfCSDI(keras.Model):
 
 # TODO Train STEP
     def train_step(self, batch):
-        observed_data, observed_mask, gt_mask = batch[0]
-        timepoints = tf.range(observed_data.shape[1])
-        batch = (observed_data, observed_mask, gt_mask, timepoints)
+        observed_data, observed_mask, observed_tp, gt_mask, for_pattern_mask, cond_mask = batch[0]
         is_train = 1
-        observed_data, observed_mask, observed_tp, gt_mask, for_pattern_mask = self.process_data(batch)
-        if is_train == 0:
-            cond_mask = gt_mask
-        elif self.target_strategy != "random":
-            cond_mask = self.get_hist_mask(observed_mask, for_pattern_mask=for_pattern_mask)
-        else:
-            cond_mask = self.get_randmask(observed_mask)
         learnable_params = (
                 self.embed_layer.trainable_variables + self.diffmodel.trainable_variables
         )
@@ -299,20 +290,20 @@ class tfCSDI(keras.Model):
 
         return samples, observed_data, target_mask, observed_mask, observed_tp
 
-    def process_data(self, batch):
-        # observed_data = tf.cast(batch["observed_data"], dtype=tf.float32)  # .to(self.device)
-        # observed_mask = tf.cast(batch["observed_mask"], dtype=tf.float32)
-        # observed_tp = tf.cast(batch["timepoints"], dtype=tf.float32)
-        # gt_mask = tf.cast(batch["gt_mask"], dtype=tf.float32)
-        observed_data, observed_mask, gt_mask, observed_tp = batch
-
-        observed_data = tf.transpose(observed_data, perm=[0, 2, 1])
-        observed_mask = tf.transpose(observed_mask, perm=[0, 2, 1])
-        gt_mask = tf.transpose(gt_mask, [0, 2, 1])
-
-        # cut_length = tf.zeros(observed_data.shape[0], dtype=tf.int64)
-        for_pattern_mask = observed_mask
-
-        return observed_data, observed_mask, observed_tp, gt_mask, for_pattern_mask #, cut_length
-
-
+    # def process_data(self, batch):
+    #     # observed_data = tf.cast(batch["observed_data"], dtype=tf.float32)  # .to(self.device)
+    #     # observed_mask = tf.cast(batch["observed_mask"], dtype=tf.float32)
+    #     # observed_tp = tf.cast(batch["timepoints"], dtype=tf.float32)
+    #     # gt_mask = tf.cast(batch["gt_mask"], dtype=tf.float32)
+    #     observed_data, observed_mask, gt_mask, observed_tp = batch
+    #
+    #     observed_data = tf.transpose(observed_data, perm=[0, 2, 1])
+    #     observed_mask = tf.transpose(observed_mask, perm=[0, 2, 1])
+    #     gt_mask = tf.transpose(gt_mask, [0, 2, 1])
+    #
+    #     # cut_length = tf.zeros(observed_data.shape[0], dtype=tf.int64)
+    #     for_pattern_mask = observed_mask
+    #
+    #     return observed_data, observed_mask, observed_tp, gt_mask, for_pattern_mask #, cut_length
+    #
+    #

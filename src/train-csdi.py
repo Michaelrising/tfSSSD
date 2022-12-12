@@ -76,42 +76,42 @@ class CSDIImputer:
         -wandbiases_entity: weight and biases entity.
         '''
 
-        config = {}
+        self.config = {}
 
-        config['train'] = {}
-        config['train']['epochs'] = epochs
-        config['train']['batch_size'] = batch_size
-        config['train']['lr'] = lr
-        config['train']['train_split'] = train_split
-        config['train']['valid_split'] = valid_split
-        config['train']['path_save'] = self.model_path
+        self.config['train'] = {}
+        self.config['train']['epochs'] = epochs
+        self.config['train']['batch_size'] = batch_size
+        self.config['train']['lr'] = lr
+        self.config['train']['train_split'] = train_split
+        self.config['train']['valid_split'] = valid_split
+        self.config['train']['path_save'] = self.model_path
 
-        config['diffusion'] = {}
-        config['diffusion']['layers'] = layers
-        config['diffusion']['channels'] = channels
-        config['diffusion']['nheads'] = nheads
-        config['diffusion']['diffusion_embedding_dim'] = difussion_embedding_dim
-        config['diffusion']['beta_start'] = beta_start
-        config['diffusion']['beta_end'] = beta_end
-        config['diffusion']['num_steps'] = num_steps
-        config['diffusion']['schedule'] = schedule
+        self.config['diffusion'] = {}
+        self.config['diffusion']['layers'] = layers
+        self.config['diffusion']['channels'] = channels
+        self.config['diffusion']['nheads'] = nheads
+        self.config['diffusion']['diffusion_embedding_dim'] = difussion_embedding_dim
+        self.config['diffusion']['beta_start'] = beta_start
+        self.config['diffusion']['beta_end'] = beta_end
+        self.config['diffusion']['num_steps'] = num_steps
+        self.config['diffusion']['schedule'] = schedule
 
-        config['model'] = {}
-        config['model']['missing_ratio_or_k'] = missing_ratio_or_k
-        config['model']['is_unconditional'] = is_unconditional
-        config['model']['timeemb'] = timeemb
-        config['model']['featureemb'] = featureemb
-        config['model']['target_strategy'] = target_strategy
-        config['model']['masking'] = masking
+        self.config['model'] = {}
+        self.config['model']['missing_ratio_or_k'] = missing_ratio_or_k
+        self.config['model']['is_unconditional'] = is_unconditional
+        self.config['model']['timeemb'] = timeemb
+        self.config['model']['featureemb'] = featureemb
+        self.config['model']['target_strategy'] = target_strategy
+        self.config['model']['masking'] = masking
 
-        print(json.dumps(config, indent=4))
+        print(json.dumps(self.config, indent=4))
 
         config_filename = self.config_path + "/config_csdi_training"
         print('configuration file name:', config_filename)
         with open(config_filename + ".json", "w") as f:
-            json.dump(config, f, indent=4)
+            json.dump(self.config, f, indent=4)
 
-        model = tfCSDI(series.shape[2], config, self.device)
+        model = tfCSDI(series.shape[2], self.config, self.device)
         # TODO keras compile fit and evaluate
         current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         # define optimizer
@@ -135,7 +135,7 @@ class CSDIImputer:
         # prepare data set
         train_data = TrainDataset(series, missing_ratio_or_k=0.1,
                                   masking='rm')  # observed_values_tensor, observed_masks_tensor, gt_mask_tensor, timepoints
-
+        train_data = self.process_data(train_data)
         model.compile(optimizer=optimizer)
         history = model.fit(x=train_data, batch_size=64, epochs=100, validation_split=0.1,
                                 callbacks=[tensorboard_callback,
@@ -148,6 +148,49 @@ class CSDIImputer:
         plt.grid()
         plt.title("Loss")
         plt.show()
+
+    def process_data(self, train_data):
+        observed_data, observed_mask, gt_mask, observed_tp = train_data
+
+        observed_data = tf.transpose(observed_data, perm=[0, 2, 1])
+        observed_mask = tf.transpose(observed_mask, perm=[0, 2, 1])
+        gt_mask = tf.transpose(gt_mask, [0, 2, 1])
+
+        # cut_length = tf.zeros(observed_data.shape[0], dtype=tf.int64)
+        for_pattern_mask = observed_mask
+        if self.config["model"]["target_strategy"] != "random":
+            cond_mask = self.get_hist_mask(observed_mask, for_pattern_mask=for_pattern_mask)
+        else:
+            cond_mask = self.get_randmask(observed_mask)
+
+        return observed_data, observed_mask, observed_tp, gt_mask, for_pattern_mask, cond_mask#, cut_length
+
+    def get_randmask(self, observed_mask):
+        rand_for_mask = np.random.uniform(size=observed_mask.shape) * observed_mask.numpy()
+        rand_for_mask = rand_for_mask.reshape(len(rand_for_mask), -1)
+        for i in range(len(observed_mask)):
+            sample_ratio = np.random.rand()
+            num_observed = tf.reduce_sum(observed_mask[i]).numpy() #.sum().item()
+            num_masked = round(num_observed * sample_ratio)
+            rand_for_mask[i][rand_for_mask[i].topk(num_masked).indices] = -1
+        cond_mask = tf.reshape(tf.convert_to_tensor(rand_for_mask > 0), observed_mask.shape)
+        cond_mask = tf.cast(cond_mask, dtype=tf.float32)
+        return cond_mask
+
+    def get_hist_mask(self, observed_mask, for_pattern_mask=None):
+        if for_pattern_mask is None:
+            for_pattern_mask = observed_mask
+        if self.config["model"]["target_strategy"] == "mix":
+            rand_mask = self.get_randmask(observed_mask)
+        # TODO tensor assignment
+        cond_mask = tf.identity(observed_mask)
+        for i in range(len(cond_mask)):
+            mask_choice = np.random.rand()
+            if self.config["model"]["target_strategy"] == "mix" and mask_choice > 0.5:
+                cond_mask[i] = rand_mask[i]
+            else:
+                cond_mask[i] = cond_mask[i] * for_pattern_mask[i - 1]
+        return cond_mask
 
     def load_weights(self,
                      path_load_model='',

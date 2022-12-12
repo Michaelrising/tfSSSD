@@ -137,12 +137,12 @@ def TrainDataset(series, missing_ratio_or_k=0.0, masking='rm'):
     observed_values_tensor = tf.stack(observed_values_list)
     observed_masks_tensor = tf.stack(observed_masks_list)
     gt_mask_tensor = tf.stack(gt_masks_list)
-    # timepoints = tf.reshape(tf.convert_to_tensor(np.arange(length)), )
+    timepoints = tf.convert_to_tensor(np.arange(length))
 
     # data_dict = {"observed_data": observed_values_tensor, "observed_mask": observed_masks_tensor,
     #              "gt_mask": gt_mask_tensor} #, "timepoints": timepoints}
 
-    return [observed_values_tensor, observed_masks_tensor, gt_mask_tensor]
+    return [observed_values_tensor, observed_masks_tensor, gt_mask_tensor, timepoints]
 
 
 def ImputeDataset(series, mask):
