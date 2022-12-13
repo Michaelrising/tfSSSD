@@ -149,6 +149,19 @@ class CSDIImputer:
         plt.title("Loss")
         plt.show()
 
+    def get_diffusion_parameters(self, num_steps, schedule, beta_start, beta_end):
+        # parameters for diffusion models
+        if schedule == "quad":
+            beta = tf.linspace(beta_start ** 0.5, beta_end ** 0.5, num_steps) ** 2
+        elif schedule == "linear":
+            beta = tf.linspace(beta_start, beta_end, num_steps)
+
+        alpha_hat = 1 - beta
+        alpha = tf.math.cumprod(alpha_hat)  # TODO numpy default is flattened need to check shape
+        alpha_tf = tf.expand_dims(tf.expand_dims(tf.cast(alpha, dtype=tf.float32), 1), 1)
+
+        return beta, alpha_hat, alpha_tf
+
     def process_data(self, train_data):
         observed_data, observed_mask, gt_mask = train_data
 
@@ -162,9 +175,26 @@ class CSDIImputer:
             cond_mask = self.get_hist_mask(observed_mask, for_pattern_mask=for_pattern_mask)
         else:
             cond_mask = self.get_randmask(observed_mask)
+        B, K, L = observed_data.shape
+        pos = tf.tile(tf.expand_dims(tf.range(L), 0), multiples=[B, 1])
+        pe = self.time_embedding(pos)
+        pe = tf.transpose(pe, [0,2,1])
 
-        return observed_data, observed_mask, gt_mask, for_pattern_mask, cond_mask#, cut_length
+        # time embedding input
+        time_fea = tf.expand_dims(tf.expand_dims(tf.range(K), 1), 0)
+        time_fea = tf.tile(time_fea, [B, 1, L])
 
+        return observed_data, observed_mask, gt_mask, for_pattern_mask, cond_mask, pe, time_fea #, cut_length
+
+    def time_embedding(self, pos, d_model=128): # pos batch_size * seq_length
+        pe = np.zeros(shape=[pos.shape[0], pos.shape[1], d_model])
+        position = tf.cast(tf.expand_dims(pos, 2), dtype=tf.float32)
+        div_term = 1 / tf.pow(10000.0, tf.range(0, d_model, 2) / d_model)
+        div_term = tf.cast(div_term, dtype=tf.float32)
+        pe[:, :, 0::2] = tf.math.sin(position * div_term)
+        pe[:, :, 1::2] = tf.math.cos(position * div_term)
+        pe = tf.cast(tf.convert_to_tensor(pe), dtype=tf.float32)
+        return pe # pe shape B L d_model(128)
 
     def get_randmask(self, observed_mask):
         rand_for_mask = np.random.uniform(size=observed_mask.shape) * observed_mask.numpy()

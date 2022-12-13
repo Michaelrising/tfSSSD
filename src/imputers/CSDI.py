@@ -1,3 +1,5 @@
+import keras
+
 from .CSDI_base import *
 
 ''' Standalone CSDI imputer. The imputer class is located in the last part of the notebook, please see more documentation there'''
@@ -97,7 +99,9 @@ class tfCSDI(keras.Model):
         if self.is_unconditional == False:
             self.emb_total_dim += 1  # for conditional mask
 
-        self.embed_layer = keras.layers.Embedding(input_dim=self.target_dim, output_dim=self.emb_feature_dim)
+        self.embed_layer = keras.Sequential()
+        self.embed_layer.add(keras.layers.Input(shape=(None, self.target_dim, )))
+        self.embed_layer.add(keras.layers.Embedding(input_dim=self.target_dim, output_dim=self.emb_feature_dim))
 
         config_diff = config["diffusion"]
         config_diff["side_dim"] = self.emb_total_dim
@@ -131,16 +135,13 @@ class tfCSDI(keras.Model):
         return pe
 
 
-    def get_side_info(self, observed_tp, cond_mask):
+    def get_side_info(self, time_embed, cond_mask, time_fea):
 
         B, K, L = cond_mask.shape
 
-        time_embed = self.time_embedding(observed_tp, self.emb_time_dim)  # (B,L,emb)
-        time_embed = tf.expand_dims(time_embed, 2)  # .expand(-1, -1, K, -1)
+        time_embed = tf.expand_dims(tf.transpose(time_embed, [0, 2, 1]), 2)  # .expand(-1, -1, K, -1)
         time_embed = tf.tile(time_embed, [1, 1, K, 1])
-        feature_embed = self.embed_layer(tf.range(self.target_dim))  # .to(self.device))  # (K,emb)
-        feature_embed = tf.expand_dims(feature_embed, 0)  # .unsqueeze(0).expand(B, L, -1, -1)
-        feature_embed = tf.tile(tf.expand_dims(feature_embed, 0), [B, L, 1, 1])
+        feature_embed = self.embed_layer(tf.transpose(time_fea, [0, 2, 1]) )# .to(self.device))  # (K,emb)
         side_info = tf.concat([time_embed, feature_embed], axis=-1)  # (B,L,K,*)
         side_info = tf.transpose(side_info, perm=[0, 3, 2, 1])  # (B,*,K,L)
 
@@ -153,19 +154,19 @@ class tfCSDI(keras.Model):
     def calc_loss_valid(self, observed_data, cond_mask, observed_mask, side_info, is_train):
         loss_sum = 0
         for t in range(self.num_steps):  # calculate loss for all t
-            loss = self.compiled_loss(observed_data, cond_mask, observed_mask, side_info, is_train, set_t=t)
+            loss = self.calc_loss(observed_data, cond_mask, observed_mask, side_info, is_train, set_t=t)
             loss_sum += loss  # .detach()
 
         return loss_sum / self.num_steps
 
-    def compiled_loss(self, observed_data, cond_mask, observed_mask, side_info, is_train, set_t=-1):
+    def calc_loss(self, observed_data, cond_mask, observed_mask, side_info, is_train, set_t=-1):
         B, K, L = observed_data.shape
         if is_train != 1:  # for validation
             t = tf.cast(tf.ones(B) * set_t, dtype=tf.int64)  # .long().to(self.device)
         else:
             # t = torch.randint(0, self.num_steps, [B]).to(self.device)
             t = tf.random.uniform(shape=(B,), minval=0, maxval=self.num_steps + 1, dtype=tf.int32)
-        current_alpha = self.alpha_torch[t]  # (B,1,1)
+        current_alpha = self.alpha_tf[t]  # (B,1,1)
 
         noise = tf.random.uniform(observed_data.shape,
                                   dtype=observed_data.dtype)  # noise = torch.randn_like(observed_data).to(self.device)
@@ -235,13 +236,13 @@ class tfCSDI(keras.Model):
 
 # TODO Train STEP
     def train_step(self, batch):
-        observed_data, observed_mask, gt_mask, for_pattern_mask, cond_mask = batch[0]
-        observed_tp = tf.range((observed_mask.shape[1],1))
+        observed_data, observed_mask, gt_mask, for_pattern_mask, cond_mask, time_emb, time_fea = batch[0]
+        # observed_tp = tf.range((observed_mask.shape[1],1))
         is_train = 1
 
         with tf.GradientTape() as tape:
             # tape.watch(learnable_params)
-            side_info = self.get_side_info(observed_tp, cond_mask)
+            side_info = self.get_side_info(time_emb, cond_mask, time_fea)
             loss = self.calc_loss(observed_data, cond_mask, observed_mask, side_info, is_train)
 
         learnable_params = (
