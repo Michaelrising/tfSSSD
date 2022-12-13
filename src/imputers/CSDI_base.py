@@ -137,12 +137,12 @@ def TrainDataset(series, missing_ratio_or_k=0.0, masking='rm'):
     observed_values_tensor = tf.stack(observed_values_list)
     observed_masks_tensor = tf.stack(observed_masks_list)
     gt_mask_tensor = tf.stack(gt_masks_list)
-    timepoints = tf.convert_to_tensor(np.arange(length))
+    # timepoints = tf.convert_to_tensor(np.arange(length))
 
     # data_dict = {"observed_data": observed_values_tensor, "observed_mask": observed_masks_tensor,
     #              "gt_mask": gt_mask_tensor} #, "timepoints": timepoints}
 
-    return [observed_values_tensor, observed_masks_tensor, gt_mask_tensor, timepoints]
+    return [observed_values_tensor, observed_masks_tensor, gt_mask_tensor]
 
 
 def ImputeDataset(series, mask):
@@ -274,13 +274,13 @@ class diff_CSDI(keras.Model):
     def __init__(self, config, inputdim=2):
         super().__init__()
         self.channels = config["channels"]
+        # feature first
+        self.input_projection = Conv1d_with_init(inputdim, self.channels, 1, activation='relu')
 
         self.diffusion_embedding = DiffusionEmbedding(
             num_steps=config["num_steps"],
             embedding_dim=config["diffusion_embedding_dim"])
 
-        # feature first
-        self.input_projection = Conv1d_with_init(inputdim, self.channels, 1, activation='relu')
         self.output_projection1 = Conv1d_with_init(self.channels, self.channels, 1, activation='relu')
         self.output_projection2 = Conv1d_with_init(self.channels, 1, 1, tf.keras.initializers.Zeros())
 

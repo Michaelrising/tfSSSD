@@ -150,7 +150,7 @@ class CSDIImputer:
         plt.show()
 
     def process_data(self, train_data):
-        observed_data, observed_mask, gt_mask, observed_tp = train_data
+        observed_data, observed_mask, gt_mask = train_data
 
         observed_data = tf.transpose(observed_data, perm=[0, 2, 1])
         observed_mask = tf.transpose(observed_mask, perm=[0, 2, 1])
@@ -163,16 +163,19 @@ class CSDIImputer:
         else:
             cond_mask = self.get_randmask(observed_mask)
 
-        return observed_data, observed_mask, observed_tp, gt_mask, for_pattern_mask, cond_mask#, cut_length
+        return observed_data, observed_mask, gt_mask, for_pattern_mask, cond_mask#, cut_length
+
 
     def get_randmask(self, observed_mask):
         rand_for_mask = np.random.uniform(size=observed_mask.shape) * observed_mask.numpy()
         rand_for_mask = rand_for_mask.reshape(len(rand_for_mask), -1)
-        for i in range(len(observed_mask)):
+        for i in range(observed_mask.shape[0]):
             sample_ratio = np.random.rand()
             num_observed = tf.reduce_sum(observed_mask[i]).numpy() #.sum().item()
             num_masked = round(num_observed * sample_ratio)
-            rand_for_mask[i][rand_for_mask[i].topk(num_masked).indices] = -1
+            index = tf.math.top_k(rand_for_mask[i], k=num_masked)
+            index = index.indices.numpy()
+            rand_for_mask[i][index] = -1
         cond_mask = tf.reshape(tf.convert_to_tensor(rand_for_mask > 0), observed_mask.shape)
         cond_mask = tf.cast(cond_mask, dtype=tf.float32)
         return cond_mask
@@ -267,6 +270,17 @@ class CSDIImputer:
 
 
 if __name__ == "__main__":
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        try:
+            # Currently, memory growth needs to be the same across GPUs
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            logical_gpus = tf.config.list_logical_devices('GPU')
+            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+        except RuntimeError as e:
+            # Memory growth must be set before GPUs have been initialized
+            print(e)
     device = '/gpu:1'
     model_path = '../results/mujoco/CSDI'
     log_path = '../log/mujoco/CSDI'

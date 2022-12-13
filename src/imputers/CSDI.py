@@ -96,6 +96,7 @@ class tfCSDI(keras.Model):
         self.emb_total_dim = self.emb_time_dim + self.emb_feature_dim
         if self.is_unconditional == False:
             self.emb_total_dim += 1  # for conditional mask
+
         self.embed_layer = keras.layers.Embedding(input_dim=self.target_dim, output_dim=self.emb_feature_dim)
 
         config_diff = config["diffusion"]
@@ -129,32 +130,6 @@ class tfCSDI(keras.Model):
         pe[:, :, 1::2] = tf.math.cos(position * div_term)
         return pe
 
-    # def get_randmask(self, observed_mask):
-    #     rand_for_mask = np.random.uniform(observed_mask.shape) * observed_mask
-    #     rand_for_mask = np.reshape(rand_for_mask, [len(rand_for_mask), -1])
-    #     for i in range(len(observed_mask)):
-    #         sample_ratio = np.random.rand()
-    #         num_observed = (observed_mask[i]).sum().item()
-    #         num_masked = round(num_observed * sample_ratio)
-    #         rand_for_mask[i][rand_for_mask[i].topk(num_masked).indices] = -1
-    #     cond_mask = tf.reshape(tf.convert_to_tensor(rand_for_mask > 0), observed_mask.shape)
-    #     cond_mask = tf.cast(cond_mask, dtype=tf.float32)
-    #     return cond_mask
-
-    # def get_hist_mask(self, observed_mask, for_pattern_mask=None):
-    #     if for_pattern_mask is None:
-    #         for_pattern_mask = observed_mask
-    #     if self.target_strategy == "mix":
-    #         rand_mask = self.get_randmask(observed_mask)
-    #     # TODO tensor assignment
-    #     cond_mask = tf.identity(observed_mask)
-    #     for i in range(len(cond_mask)):
-    #         mask_choice = np.random.rand()
-    #         if self.target_strategy == "mix" and mask_choice > 0.5:
-    #             cond_mask[i] = rand_mask[i]
-    #         else:
-    #             cond_mask[i] = cond_mask[i] * for_pattern_mask[i - 1]
-    #     return cond_mask
 
     def get_side_info(self, observed_tp, cond_mask):
 
@@ -178,12 +153,12 @@ class tfCSDI(keras.Model):
     def calc_loss_valid(self, observed_data, cond_mask, observed_mask, side_info, is_train):
         loss_sum = 0
         for t in range(self.num_steps):  # calculate loss for all t
-            loss = self.calc_loss(observed_data, cond_mask, observed_mask, side_info, is_train, set_t=t)
+            loss = self.compiled_loss(observed_data, cond_mask, observed_mask, side_info, is_train, set_t=t)
             loss_sum += loss  # .detach()
 
         return loss_sum / self.num_steps
 
-    def calc_loss(self, observed_data, cond_mask, observed_mask, side_info, is_train, set_t=-1):
+    def compiled_loss(self, observed_data, cond_mask, observed_mask, side_info, is_train, set_t=-1):
         B, K, L = observed_data.shape
         if is_train != 1:  # for validation
             t = tf.cast(tf.ones(B) * set_t, dtype=tf.int64)  # .long().to(self.device)
@@ -260,16 +235,18 @@ class tfCSDI(keras.Model):
 
 # TODO Train STEP
     def train_step(self, batch):
-        observed_data, observed_mask, observed_tp, gt_mask, for_pattern_mask, cond_mask = batch[0]
+        observed_data, observed_mask, gt_mask, for_pattern_mask, cond_mask = batch[0]
+        observed_tp = tf.range((observed_mask.shape[1],1))
         is_train = 1
-        learnable_params = (
-                self.embed_layer.trainable_variables + self.diffmodel.trainable_variables
-        )
+
         with tf.GradientTape() as tape:
-            tape.watch(learnable_params)
+            # tape.watch(learnable_params)
             side_info = self.get_side_info(observed_tp, cond_mask)
             loss = self.calc_loss(observed_data, cond_mask, observed_mask, side_info, is_train)
 
+        learnable_params = (
+                self.embed_layer.trainable_variables + self.diffmodel.trainable_variables
+        )
         # Compute gradients and update the parameters.
         gradients = tape.gradient(loss, learnable_params)
         self.optimizer.apply_gradients(zip(gradients, learnable_params))
