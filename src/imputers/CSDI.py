@@ -126,15 +126,6 @@ class tfCSDI(keras.Model):
     def metrics(self):
         return [self.loss_tracker]
 
-    def time_embedding(self, pos, d_model=128):
-        pe = tf.zeros(pos.shape[0], pos.shape[1], d_model)  # .to(self.device)
-        position = tf.expand_dims(pos, 2)
-        div_term = 1 / tf.pow(10000.0, tf.range(0, d_model, 2) / d_model)  # .to(self.device)
-        pe[:, :, 0::2] = tf.math.sin(position * div_term)
-        pe[:, :, 1::2] = tf.math.cos(position * div_term)
-        return pe
-
-
     def get_side_info(self, time_embed, cond_mask, time_fea):
 
         B, K, L = cond_mask.shape
@@ -159,22 +150,13 @@ class tfCSDI(keras.Model):
 
         return loss_sum / self.num_steps
 
-    def calc_loss(self, observed_data, cond_mask, observed_mask, side_info, is_train, set_t=-1):
-        B, K, L = observed_data.shape
-        if is_train != 1:  # for validation
-            t = tf.cast(tf.ones(B) * set_t, dtype=tf.int64)  # .long().to(self.device)
-        else:
-            # t = torch.randint(0, self.num_steps, [B]).to(self.device)
-            t = tf.random.uniform(shape=(B,), minval=0, maxval=self.num_steps + 1, dtype=tf.int32)
-        current_alpha = self.alpha_tf[t]  # (B,1,1)
+    def calc_loss(self, observed_data, cond_mask, observed_mask, side_info, alpha_tf, noise, diff_ebd,is_train=1, set_t=-1):
 
-        noise = tf.random.uniform(observed_data.shape,
-                                  dtype=observed_data.dtype)  # noise = torch.randn_like(observed_data).to(self.device)
-        noisy_data = (current_alpha ** 0.5) * observed_data + (1.0 - current_alpha) ** 0.5 * noise
+        noisy_data = (alpha_tf ** 0.5) * observed_data + (1.0 - alpha_tf) ** 0.5 * noise
 
         total_input = self.set_input_to_diffmodel(noisy_data, observed_data, cond_mask)
 
-        predicted = self.diffmodel.call(total_input, side_info, t)  # (B,K,L)
+        predicted = self.diffmodel.call(total_input, side_info, diff_ebd)  # (B,K,L)
 
         target_mask = observed_mask - cond_mask
         residual = (noise - predicted) * target_mask
@@ -236,14 +218,15 @@ class tfCSDI(keras.Model):
 
 # TODO Train STEP
     def train_step(self, batch):
-        observed_data, observed_mask, gt_mask, for_pattern_mask, cond_mask, time_emb, time_fea = batch[0]
+        observed_data, observed_mask, gt_mask, for_pattern_mask, \
+        cond_mask, time_emb, time_fea, alpha_tf, noise, diff_ebd = batch[0]
         # observed_tp = tf.range((observed_mask.shape[1],1))
         is_train = 1
 
         with tf.GradientTape() as tape:
             # tape.watch(learnable_params)
             side_info = self.get_side_info(time_emb, cond_mask, time_fea)
-            loss = self.calc_loss(observed_data, cond_mask, observed_mask, side_info, is_train)
+            loss = self.calc_loss(observed_data, cond_mask, observed_mask, side_info, alpha_tf, noise, diff_ebd, is_train)
 
         learnable_params = (
                 self.embed_layer.trainable_variables + self.diffmodel.trainable_variables

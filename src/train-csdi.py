@@ -149,18 +149,30 @@ class CSDIImputer:
         plt.title("Loss")
         plt.show()
 
-    def get_diffusion_parameters(self, num_steps, schedule, beta_start, beta_end):
+    def _build_embedding(self, num_steps, dim=64):
+        steps = tf.expand_dims(tf.range(num_steps), 1)  # (T,1)
+        frequencies = 10.0 ** tf.expand_dims(tf.range(dim) / (dim - 1) * 4.0, 0)  # (1,dim)
+        steps = tf.cast(steps, tf.float32)
+        frequencies = tf.cast(frequencies, tf.float32)
+        table = steps * frequencies  # (T,dim)
+        table = tf.concat([tf.math.sin(table), tf.math.cos(table)], axis=1)  # (T,dim*2)
+        return table
+
+    def get_diffusion_parameters(self):
+        # num_steps = 50
         # parameters for diffusion models
-        if schedule == "quad":
-            beta = tf.linspace(beta_start ** 0.5, beta_end ** 0.5, num_steps) ** 2
-        elif schedule == "linear":
-            beta = tf.linspace(beta_start, beta_end, num_steps)
+        if self.config['diffusion']['schedule'] == "quad":
+            beta = tf.linspace(self.config['diffusion']['beta_start'] ** 0.5, self.config['diffusion']['beta_end'] ** 0.5,
+                               self.config['diffusion']['num_steps']) ** 2
+        elif self.config['diffusion']['schedule'] == "linear":
+            beta = tf.linspace(self.config['diffusion']['beta_start'], self.config['diffusion']['beta_end'],
+                               self.config['diffusion']['num_steps'])
 
         alpha_hat = 1 - beta
         alpha = tf.math.cumprod(alpha_hat)  # TODO numpy default is flattened need to check shape
-        alpha_tf = tf.expand_dims(tf.expand_dims(tf.cast(alpha, dtype=tf.float32), 1), 1)
+        alpha_tf = tf.expand_dims(tf.expand_dims(tf.cast(alpha, dtype=tf.float32), 1), 1) # num_step, 1, 1
 
-        return beta, alpha_hat, alpha_tf
+        return alpha_tf
 
     def process_data(self, train_data):
         observed_data, observed_mask, gt_mask = train_data
@@ -184,7 +196,19 @@ class CSDIImputer:
         time_fea = tf.expand_dims(tf.expand_dims(tf.range(K), 1), 0)
         time_fea = tf.tile(time_fea, [B, 1, L])
 
-        return observed_data, observed_mask, gt_mask, for_pattern_mask, cond_mask, pe, time_fea #, cut_length
+        # random t for diffusion model
+        t = tf.random.uniform(shape=(B,), minval=0, maxval=self.config['diffusion']['num_steps'] + 1, dtype=tf.int32)
+        alpha_tf = self.get_diffusion_parameters()
+        alpha_tf = tf.gather(alpha_tf, t, axis=0)
+
+        # noise data
+        noise = tf.random.uniform(observed_data.shape,
+                                  dtype=observed_data.dtype)
+        # diffusion embedding
+        diff_emb = self._build_embedding(self.config['diffusion']['num_steps'])
+        diff_emb = tf.gather(diff_emb, t, axis=0)
+
+        return observed_data, observed_mask, gt_mask, for_pattern_mask, cond_mask, pe, time_fea, alpha_tf, noise, diff_emb#, cut_length
 
     def time_embedding(self, pos, d_model=128): # pos batch_size * seq_length
         pe = np.zeros(shape=[pos.shape[0], pos.shape[1], d_model])
@@ -300,6 +324,7 @@ class CSDIImputer:
 
 
 if __name__ == "__main__":
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
     gpus = tf.config.list_physical_devices('GPU')
     if gpus:
         try:

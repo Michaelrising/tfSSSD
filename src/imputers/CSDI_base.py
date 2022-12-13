@@ -6,6 +6,7 @@ import tensorflow as tf
 from tensorflow import keras
 import tensorflow_addons as tfa
 import math
+from einops import rearrange
 import argparse
 import datetime
 import json
@@ -242,14 +243,14 @@ def swish(x):
     return x * keras.activations.sigmoid(x)
 
 
-def _build_embedding(num_steps, dim=64):
-    steps = tf.expand_dims(tf.range(num_steps), 1)  # (T,1)
-    frequencies = 10.0 ** tf.expand_dims(tf.range(dim) / (dim - 1) * 4.0, 0)  # (1,dim)
-    steps = tf.cast(steps, tf.float32)
-    frequencies = tf.cast(frequencies, tf.float32)
-    table = steps * frequencies  # (T,dim)
-    table = tf.concat([tf.math.sin(table), tf.math.cos(table)], axis=1)  # (T,dim*2)
-    return table
+# def _build_embedding(num_steps, dim=64):
+#     steps = tf.expand_dims(tf.range(num_steps), 1)  # (T,1)
+#     frequencies = 10.0 ** tf.expand_dims(tf.range(dim) / (dim - 1) * 4.0, 0)  # (1,dim)
+#     steps = tf.cast(steps, tf.float32)
+#     frequencies = tf.cast(frequencies, tf.float32)
+#     table = steps * frequencies  # (T,dim)
+#     table = tf.concat([tf.math.sin(table), tf.math.cos(table)], axis=1)  # (T,dim*2)
+#     return table
 
 
 class DiffusionEmbedding(keras.Model):
@@ -257,15 +258,15 @@ class DiffusionEmbedding(keras.Model):
         super().__init__()
         if projection_dim is None:
             projection_dim = embedding_dim
-        # TODO persistent?
-        setattr(self, "embedding",
-                tf.Variable(_build_embedding(num_steps, int(embedding_dim / 2)), name="embedding", trainable=False))
+        # # TODO persistent?
+        # setattr(self, "embedding",
+        #         tf.Variable(_build_embedding(num_steps, int(embedding_dim / 2)), name="embedding", trainable=False))
         self.projection = keras.Sequential()
         self.projection.add(keras.layers.Dense(projection_dim, activation=swish))
         self.projection.add(keras.layers.Dense(projection_dim, activation=swish))
 
-    def call(self, diffusion_step):
-        x = self.embedding[diffusion_step]
+    def call(self, diff_ebd):
+        x = diff_ebd
         x = self.projection(x)
         return x
 
@@ -296,18 +297,19 @@ class diff_CSDI(keras.Model):
                 )
             )
 
-    def call(self, x, cond_info, diffusion_step):
+    def call(self, x, cond_info, diff_ebd):
         B, inputdim, K, L = x.shape
-
-        x = tf.reshape(x, [B, inputdim, K * L])
+        x = rearrange(x, 'i j k l -> i j (k l)')
+        # x = tf.reshape(x, [B, inputdim, K * L])
         x = self.input_projection(x)
-        x = tf.reshape(x, [B, self.channels, K, L])
+        x = rearrange(x, 'i j (k l) -> i j k l', k=K)
+        # x = tf.reshape(x, [B, self.channels, K, L])
 
-        diffusion_emb = self.diffusion_embedding.call(diffusion_step)
+        diffusion_emb = self.diffusion_embedding.call(diff_ebd)
 
         skip = []
         for layer in self.residual_layers:
-            x, skip_connection = layer.all(x, cond_info, diffusion_emb)
+            x, skip_connection = layer.call(x, cond_info, diffusion_emb)
             skip.append(skip_connection)
 
         x = tf.reduce_sum(tf.stack(skip), axis=0) / tf.math.sqrt(len(self.residual_layers))
@@ -326,37 +328,44 @@ class ResidualBlock(keras.Model):
         self.mid_projection = Conv1d_with_init(channels, 2 * channels, 1)
         self.output_projection = Conv1d_with_init(channels, 2 * channels, 1)
 
-        self.time_layer = get_torch_trans(heads=nheads, layers=1, in_channels=channels, out_channels=channels)
-        self.feature_layer = get_torch_trans(heads=nheads, layers=1, in_channels=channels, out_channels=channels)
+        self.time_layer = keras.Sequential()
+        self.time_layer.add(keras.layers.Input((None, channels)))
+        self.time_layer.add(get_torch_trans(heads=nheads, layers=1, in_channels=channels, out_channels=channels))
+        self.feature_layer = keras.Sequential()
+        self.feature_layer.add(keras.layers.Input((None, channels)))
+        self.feature_layer.add(get_torch_trans(heads=nheads, layers=1, in_channels=channels, out_channels=channels))
 
     def forward_time(self, y, base_shape):
         B, channel, K, L = base_shape
         if L == 1:
             return y
-        y = tf.transpose(tf.reshape(y, [B, channel, K, L]), [0, 2, 1, 3])
-        y = tf.reshape(y, [B * K, channel, L])
-        y = self.time_layer(tf.transpose(y, [2, 0, 1]))
-        y = tf.transpose(y, [1, 2, 0])
-        y = tf.transpose(tf.reshape(y, [B, K, channel, L]), [0, 2, 1, 3])
-        y = tf.reshape(y, [B, channel, K * L])
+        y = tf.transpose(rearrange(y, 'b c (k l) -> b c k l', k=K), [0, 2, 1, 3]) # b k c l
+        # y = tf.reshape(y, [B * K, channel, L])
+        y = rearrange(y, 'b k c l -> (b k) c l')
+        y = self.time_layer(tf.transpose(y, [2, 0, 1])) # l (b k) c
+        y = tf.transpose(y, [1, 2, 0]) # (b k) c l
+        y = tf.transpose(rearrange(y, '(b k) c l -> b k c l', k =K), [0, 2, 1, 3]) # b c k l
+        # y = rearrange(y, 'b k c l -> b c k l')
         return y
 
     def forward_feature(self, y, base_shape):
         B, channel, K, L = base_shape
         if K == 1:
             return y
-        y = tf.transpose(tf.reshape(y, [B, channel, K, L]), [0, 3, 1, 2])
-        y = tf.reshape(y, [B * L, channel, K])
-        y = self.feature_layer(tf.transpose(y, [2, 0, 1]))
-        y = tf.transpose(y, [1, 2, 0])
-        y = tf.transpose(tf.reshape(y, [B, L, channel, K]), [0, 2, 3, 1])
-        y = tf.reshape(y, [B, channel, K * L])
+        y = tf.transpose(rearrange(y, 'b c (k l) -> b c k l', k=K), [0, 3, 1, 2]) # b l c k
+        # y = tf.reshape(y, [B * L, channel, K])
+        y = rearrange(y, 'b l c k -> (b l) c k') # (b l) c k
+        y = self.feature_layer(tf.transpose(y, [2, 0, 1])) # k (b l) c
+        y = tf.transpose(y, [1, 2, 0]) # (b l) c k
+        y = tf.transpose(rearrange(y, '(b l) c k -> b l c k', l=L), [0, 2, 3, 1]) # b c k l
+        y = rearrange(y, 'b c k l -> b c (k l)')
         return y
 
     def call(self, x, cond_info, diffusion_emb):
         B, channel, K, L = x.shape
         base_shape = x.shape
-        x = tf.reshape(x, [B, channel, K * L])
+        x = rearrange(x, 'b c k l -> b c (k l)')
+        # x = tf.reshape(x, [B, channel, K * L])
 
         diffusion_emb = self.diffusion_projection(diffusion_emb)
         diffusion_emb = tf.expand_dims(diffusion_emb, -1)  # (B,channel,1)
@@ -367,7 +376,7 @@ class ResidualBlock(keras.Model):
         y = self.mid_projection(y)  # (B,2*channel,K*L)
 
         _, cond_dim, _, _ = cond_info.shape
-        cond_info = tf.reshape(cond_info, [B, cond_dim, K * L])
+        cond_info = rearrange(cond_info, 'b c k l -> b c (k l)')
         cond_info = self.cond_projection(cond_info)  # (B,2*channel,K*L)
         y = y + cond_info
 
@@ -376,7 +385,7 @@ class ResidualBlock(keras.Model):
         y = self.output_projection(y)
 
         residual, skip = tf.split(y, 2, axis=1)
-        x = tf.reshape(x, base_shape)
-        residual = tf.reshape(residual, base_shape)
-        skip = tf.reshape(skip, base_shape)
+        x = rearrange(x, 'b c (k l) -> b c k l ', k=K)
+        residual = rearrange(residual, 'b c (k l) -> b c k l ', k=K)
+        skip = rearrange(skip, 'b c (k l) -> b c k l ', k=K)
         return (x + residual) / math.sqrt(2.0), skip
