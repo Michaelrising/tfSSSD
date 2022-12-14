@@ -7,12 +7,8 @@ from tensorflow import keras
 import tensorflow_addons as tfa
 import math
 from einops import rearrange
-import argparse
-import datetime
-import json
-import yaml
-import os
-# from torch.utils.data import DataLoader, Dataset
+from Encoder_keras import Encoder
+
 
 def quantile_loss(target, forecast, q: tf.float32, eval_points) -> tf.float32:
     return 2 * tf.reduce_sum(tf.math.abs((forecast - target) * eval_points * ((target <= forecast) * 1.0 - q)))
@@ -211,7 +207,7 @@ def TransformerEncoder(
     for _ in range(num_transformer_blocks):
         x = transformer_encoder(x, head_size, num_heads, ff_dim, activation, dropout)
 
-    x = keras.layers.GlobalAveragePooling1D(data_format="channels_last")(x)
+    # x = keras.layers.GlobalAveragePooling1D(data_format="channels_last")(x)
     for dim in mlp_units:
         x = keras.layers.Dense(dim, activation="relu")(x)
         x = keras.layers.Dropout(mlp_dropout)(x)
@@ -220,15 +216,7 @@ def TransformerEncoder(
 
 
 def get_torch_trans(heads=8, layers=1, in_channels=64, out_channels=64):
-    return TransformerEncoder(in_channels,
-                              out_channels,
-                              head_size=in_channels,
-                              num_heads=heads,
-                              ff_dim=64,
-                              num_transformer_blocks=layers,
-                              mlp_units=[],
-                              activation='gelu',
-                              )
+    return Encoder(num_layers=layers, d_model=out_channels, num_heads=heads, dff=64)
 
 
 def Conv1d_with_init(in_channels, out_channels, kernel_size, initializer=None, activation=None):
@@ -341,8 +329,8 @@ class ResidualBlock(keras.Model):
             return y
         y = tf.transpose(rearrange(y, 'b c (k l) -> b c k l', k=K), [0, 2, 1, 3]) # b k c l
         # y = tf.reshape(y, [B * K, channel, L])
-        y = rearrange(y, 'b k c l -> (b k) c l')
-        y = self.time_layer(tf.transpose(y, [2, 0, 1])) # l (b k) c
+        y = rearrange(y, 'b k c l -> (b k) l c') # in torch version, batch_first if False so it transposes input as L B C but we dont need to do here
+        y = self.time_layer(y) # (b k) l c
         y = tf.transpose(y, [1, 2, 0]) # (b k) c l
         y = tf.transpose(rearrange(y, '(b k) c l -> b k c l', k =K), [0, 2, 1, 3]) # b c k l
         # y = rearrange(y, 'b k c l -> b c k l')
