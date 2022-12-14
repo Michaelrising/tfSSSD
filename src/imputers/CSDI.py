@@ -162,7 +162,12 @@ class tfCSDI(keras.Model):
         residual = (noise - predicted) * target_mask
 
         num_eval = tf.reduce_sum(target_mask)
-        loss = tf.reduce_sum(residual ** 2) / (num_eval if num_eval > 0 else 1)
+        loss = tf.reduce_sum(residual ** 2)
+        loss = tf.cond(
+            num_eval > 0,
+            true_fn = lambda: loss/num_eval,
+            false_fn= lambda: loss
+        )
 
         return loss
 

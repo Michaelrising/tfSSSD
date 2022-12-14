@@ -1,5 +1,8 @@
 from imputers.CSDI import *
 import matplotlib.pyplot as plt
+import os
+import json
+from datetime import datetime
 
 class CSDIImputer:
     def __init__(self, device, model_path, log_path, config_path):
@@ -113,7 +116,7 @@ class CSDIImputer:
 
         model = tfCSDI(series.shape[2], self.config, self.device)
         # TODO keras compile fit and evaluate
-        current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
         # define optimizer
         p1 = int(0.75 * epochs)
         p2 = int(0.9 * epochs)
@@ -137,7 +140,7 @@ class CSDIImputer:
                                   masking='rm')  # observed_values_tensor, observed_masks_tensor, gt_mask_tensor, timepoints
         train_data = self.process_data(train_data)
         model.compile(optimizer=optimizer)
-        history = model.fit(x=train_data, batch_size=64, epochs=100, validation_split=0.1,
+        history = model.fit(x=train_data, batch_size=32, epochs=20, validation_split=0.1,
                                 callbacks=[tensorboard_callback,
                                          earlyStop_loss_callback,
                                          earlyStop_accu_call_back,
@@ -324,18 +327,19 @@ class CSDIImputer:
 
 
 if __name__ == "__main__":
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-    gpus = tf.config.list_physical_devices('GPU')
-    if gpus:
-        try:
-            # Currently, memory growth needs to be the same across GPUs
-            for gpu in gpus:
-                tf.config.experimental.set_memory_growth(gpu, True)
-            logical_gpus = tf.config.list_logical_devices('GPU')
-            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-        except RuntimeError as e:
-            # Memory growth must be set before GPUs have been initialized
-            print(e)
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    # os.environ['TF_GPU_ALLOCATOR']='cuda_malloc_async'
+    # gpus = tf.config.list_physical_devices('GPU')
+    # if gpus:
+    #     try:
+    #         # Currently, memory growth needs to be the same across GPUs
+    #         for gpu in gpus:
+    #             tf.config.experimental.set_memory_growth(gpu, True)
+    #         logical_gpus = tf.config.list_logical_devices('GPU')
+    #         print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+    #     except RuntimeError as e:
+    #         # Memory growth must be set before GPUs have been initialized
+    #         print(e)
     device = '/gpu:1'
     model_path = '../results/mujoco/CSDI'
     log_path = '../log/mujoco/CSDI'
@@ -350,7 +354,7 @@ if __name__ == "__main__":
     training_data = np.load('../datasets/Mujoco/train_mujoco.npy')
     # training_data = np.split(training_data, 160, 0)
     training_data = np.array(training_data)
-    training_data = tf.convert_to_tensor(training_data)
+    training_data = tf.convert_to_tensor(training_data[:2000])
     print('Data loaded')
-    CSDIImputer = CSDIImputer( device, model_path, log_path, config_path)
+    CSDIImputer = CSDIImputer(device, model_path, log_path, config_path)
     CSDIImputer.train(training_data)

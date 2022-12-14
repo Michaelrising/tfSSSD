@@ -7,7 +7,7 @@ from tensorflow import keras
 import tensorflow_addons as tfa
 import math
 from einops import rearrange
-from Encoder_keras import Encoder
+from .Encoder_keras import Encoder
 
 
 def quantile_loss(target, forecast, q: tf.float32, eval_points) -> tf.float32:
@@ -300,11 +300,13 @@ class diff_CSDI(keras.Model):
             x, skip_connection = layer.call(x, cond_info, diffusion_emb)
             skip.append(skip_connection)
 
-        x = tf.reduce_sum(tf.stack(skip), axis=0) / tf.math.sqrt(len(self.residual_layers))
-        x = tf.reshape(x, [B, self.channels, K * L])
+        x = tf.reduce_sum(tf.stack(skip), axis=0) / tf.math.sqrt(float(len(self.residual_layers)))
+        # x = tf.reshape(x, [B, self.channels, K * L])
+        x = rearrange(x, 'b c k l -> b c (k l)')
         x = self.output_projection1(x)  # (B,channel,K*L)
         x = self.output_projection2(x)  # (B,1,K*L)
-        x = tf.reshape(x, [B, K, L])
+        # x = tf.reshape(x, [B, K, L])
+        x = rearrange(tf.squeeze(x, 1), 'b (k l) -> b k l', k=K)
         return x
 
 
@@ -327,12 +329,11 @@ class ResidualBlock(keras.Model):
         B, channel, K, L = base_shape
         if L == 1:
             return y
-        y = tf.transpose(rearrange(y, 'b c (k l) -> b c k l', k=K), [0, 2, 1, 3]) # b k c l
-        # y = tf.reshape(y, [B * K, channel, L])
-        y = rearrange(y, 'b k c l -> (b k) l c') # in torch version, batch_first if False so it transposes input as L B C but we dont need to do here
+        y = rearrange(y, 'b c (k l) -> b k c l', k=K) # b k c l
+        y = rearrange(y, 'b k c l -> l (b k) c') # in torch version, batch_first if False so it transposes input as L B C but we dont need to do here
         y = self.time_layer(y) # (b k) l c
         y = tf.transpose(y, [1, 2, 0]) # (b k) c l
-        y = tf.transpose(rearrange(y, '(b k) c l -> b k c l', k =K), [0, 2, 1, 3]) # b c k l
+        y = rearrange(y, '(b k) c l -> b c (k l)', k =K) # b c k l
         # y = rearrange(y, 'b k c l -> b c k l')
         return y
 
@@ -340,13 +341,12 @@ class ResidualBlock(keras.Model):
         B, channel, K, L = base_shape
         if K == 1:
             return y
-        y = tf.transpose(rearrange(y, 'b c (k l) -> b c k l', k=K), [0, 3, 1, 2]) # b l c k
-        # y = tf.reshape(y, [B * L, channel, K])
-        y = rearrange(y, 'b l c k -> (b l) c k') # (b l) c k
-        y = self.feature_layer(tf.transpose(y, [2, 0, 1])) # k (b l) c
-        y = tf.transpose(y, [1, 2, 0]) # (b l) c k
-        y = tf.transpose(rearrange(y, '(b l) c k -> b l c k', l=L), [0, 2, 3, 1]) # b c k l
-        y = rearrange(y, 'b c k l -> b c (k l)')
+        y = rearrange(y, 'b c (k l) -> (b l) c k', k=K) # (bl) c k
+        y = rearrange(y, '(b l) c k -> k (b l) c', l=L)
+        y = self.feature_layer(y) # k (b l) c
+        y = rearrange(y, 'k (b l) c -> (b l) c k', l=L) # (b l) c k
+        y = rearrange(y, '(b l) c k -> b c k l', l=L) # b c k l
+        y = rearrange(y, 'b c k l -> b c (k l)', l=L)
         return y
 
     def call(self, x, cond_info, diffusion_emb):
