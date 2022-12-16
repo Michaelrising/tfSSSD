@@ -200,7 +200,7 @@ class CSDIImputer:
         time_fea = tf.tile(time_fea, [B, 1, L])
 
         # random t for diffusion model
-        t = tf.random.uniform(shape=(B,), minval=0, maxval=self.config['diffusion']['num_steps'] + 1, dtype=tf.int32)
+        t = tf.random.uniform(shape=(B,), minval=0, maxval=self.config['diffusion']['num_steps'], dtype=tf.int32) # GPU version works fine but CPU gets 50 out of index
         alpha_tf = self.get_diffusion_parameters()
         alpha_tf = tf.gather(alpha_tf, t, axis=0)
 
@@ -327,7 +327,7 @@ class CSDIImputer:
 
 
 if __name__ == "__main__":
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
     # os.environ['TF_GPU_ALLOCATOR']='cuda_malloc_async'
     # gpus = tf.config.list_physical_devices('GPU')
     # if gpus:
@@ -340,7 +340,7 @@ if __name__ == "__main__":
     #     except RuntimeError as e:
     #         # Memory growth must be set before GPUs have been initialized
     #         print(e)
-    device = '/gpu:1'
+    device = '/cpu:0'
     model_path = '../results/mujoco/CSDI'
     log_path = '../log/mujoco/CSDI'
     config_path = './config'
