@@ -1,3 +1,4 @@
+import einops
 import keras
 
 from .CSDI_base import *
@@ -100,7 +101,7 @@ class tfCSDI(keras.Model):
             self.emb_total_dim += 1  # for conditional mask
 
         self.embed_layer = keras.Sequential()
-        self.embed_layer.add(keras.layers.Input(shape=(None, self.target_dim, )))
+        self.embed_layer.add(keras.layers.Input(shape=(self.target_dim, )))
         self.embed_layer.add(keras.layers.Embedding(input_dim=self.target_dim, output_dim=self.emb_feature_dim))
 
         config_diff = config["diffusion"]
@@ -127,24 +128,32 @@ class tfCSDI(keras.Model):
         return [self.loss_tracker]
 
     def time_embedding(self, pos, d_model=128):  # pos batch_size * seq_length
-        pe = np.zeros(shape=[tf.shape(pos)[0], tf.shape(pos)[1], d_model])
+        pe = tf.Variable(tf.zeros(shape=[tf.shape(pos)[0], tf.shape(pos)[1], d_model]), trainable=False, dtype=tf.float32) # pe: B L d_model
         position = tf.cast(tf.expand_dims(pos, 2), dtype=tf.float32)
-        div_term = 1 / tf.pow(10000.0, tf.range(0, d_model, 2) / d_model)
+        pow_y = tf.cast(tf.range(0, d_model, 2) / d_model, dtype=tf.float32)
+        div_term = 1 / tf.pow(10000.0, pow_y)
         div_term = tf.cast(div_term, dtype=tf.float32)
-        pe[:, :, 0::2] = tf.math.sin(position * div_term)
-        pe[:, :, 1::2] = tf.math.cos(position * div_term)
-        pe = tf.cast(tf.convert_to_tensor(pe), dtype=tf.float32)
-        return pe  # pe shape B L d_model(128)
+        # pe[:, :, 0::2] = tf.math.sin(position * div_term)
+        sparse_delta0 = tf.IndexedSlices(values=tf.math.sin(position * div_term), indices=tf.range(0, d_model, 2))
+        pe.batch_scatter_update(sparse_delta0)
+        # pe[:, :, 1::2] = tf.math.cos(position * div_term)
+        sparse_delta1 = tf.IndexedSlices(values=tf.math.sin(position * div_term), indices=tf.range(1, d_model, 2))
+        pe.batch_scatter_update(sparse_delta1) # pe shape B L d_model(128)
+        pe = rearrange(pe, 'i j k -> i k j') # pe shape B d_model(128) L
+        return pe
 
-    def get_side_info(self, observed_tp, cond_mask, time_fea):
+    def get_side_info(self, observed_tp, cond_mask):
 
         B, K, L = cond_mask.shape
-        time_embed = self.time_embedding(observed_tp, self.emb_time_dim)
-        time_embed = tf.expand_dims(tf.transpose(time_embed, [0, 2, 1]), 2)
-        time_embed = tf.tile(time_embed, [1, 1, K, 1])
-        feature_embed = self.embed_layer(tf.transpose(time_fea, [0, 2, 1]) )
+        time_embed = self.time_embedding(observed_tp, self.emb_time_dim) # B d_model L
+        time_embed = tf.expand_dims(time_embed, 2) # B d_model 1 L
+        time_embed = tf.tile(time_embed, [1, 1, K, 1]) # B d_model K L
+        # input to embed_layer is B * self.target_dim, output is self.target_dim * self.emb_feature_dim (14 *16)
+        feature = tf.tile(tf.range(self.target_dim),[tf.shape(cond_mask)[0], 1]) # B * target_dim
+        feature_embed = self.embed_layer(feature) # B * target_dim * embed_output_dim
+        feature_embed = einops.repeat(feature_embed, 'i j k -> i l j k', l=L)
         side_info = tf.concat([time_embed, feature_embed], axis=-1)  # (B,L,K,*)
-        side_info = tf.transpose(side_info, perm=[0, 3, 2, 1])  # (B,*,K,L)
+        side_info = rearrange(side_info, 'i j k l -> i l k j') # (B,*,K,L)
 
         if self.is_unconditional == False:
             side_mask = tf.expand_dims(cond_mask, 1)  # (B,1,K,L)
@@ -235,14 +244,16 @@ class tfCSDI(keras.Model):
 
     def train_step(self, batch):
         observed_data, observed_mask, _, \
-        cond_mask, time_emb, time_fea, alpha_tf, noise, diff_ebd = batch[0]
-        # observed_tp = tf.range((observed_mask.shape[1],1))
+        cond_mask, _, _, alpha_tf, noise, diff_ebd = batch[0]
+        observed_tp = tf.reshape(tf.range(tf.shape(observed_data)[1]), [1, tf.shape(observed_data)[1]])
+        # observed_tp = einops.repeat(observed_tp, 'i -> k i', k=tf.shape(observed_data)[0]) # B L
+        observed_tp = tf.tile(observed_tp, [tf.shape(observed_data)[0], 1]) # B L
         is_train = 1
 
         with tf.GradientTape() as tape:
             # tape.watch(learnable_params)
-            side_info = self.get_side_info(time_emb, cond_mask, time_fea)
-            loss = self.calc_loss(observed_data, cond_mask, observed_mask, side_info, alpha_tf, noise, diff_ebd, is_train)
+            side_info = self.get_side_info(observed_tp, cond_mask)
+            loss = self.calc_loss(observed_data, cond_mask, observed_mask, side_info, diff_ebd, is_train)
 
         learnable_params = (
                 self.embed_layer.trainable_variables + self.diffmodel.trainable_variables
