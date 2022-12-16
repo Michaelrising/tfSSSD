@@ -126,13 +126,23 @@ class tfCSDI(keras.Model):
     def metrics(self):
         return [self.loss_tracker]
 
-    def get_side_info(self, time_embed, cond_mask, time_fea):
+    def time_embedding(self, pos, d_model=128):  # pos batch_size * seq_length
+        pe = np.zeros(shape=[tf.shape(pos)[0], tf.shape(pos)[1], d_model])
+        position = tf.cast(tf.expand_dims(pos, 2), dtype=tf.float32)
+        div_term = 1 / tf.pow(10000.0, tf.range(0, d_model, 2) / d_model)
+        div_term = tf.cast(div_term, dtype=tf.float32)
+        pe[:, :, 0::2] = tf.math.sin(position * div_term)
+        pe[:, :, 1::2] = tf.math.cos(position * div_term)
+        pe = tf.cast(tf.convert_to_tensor(pe), dtype=tf.float32)
+        return pe  # pe shape B L d_model(128)
+
+    def get_side_info(self, observed_tp, cond_mask, time_fea):
 
         B, K, L = cond_mask.shape
-
-        time_embed = tf.expand_dims(tf.transpose(time_embed, [0, 2, 1]), 2)  # .expand(-1, -1, K, -1)
+        time_embed = self.time_embedding(observed_tp, self.emb_time_dim)
+        time_embed = tf.expand_dims(tf.transpose(time_embed, [0, 2, 1]), 2)
         time_embed = tf.tile(time_embed, [1, 1, K, 1])
-        feature_embed = self.embed_layer(tf.transpose(time_fea, [0, 2, 1]) )# .to(self.device))  # (K,emb)
+        feature_embed = self.embed_layer(tf.transpose(time_fea, [0, 2, 1]) )
         side_info = tf.concat([time_embed, feature_embed], axis=-1)  # (B,L,K,*)
         side_info = tf.transpose(side_info, perm=[0, 3, 2, 1])  # (B,*,K,L)
 
@@ -150,13 +160,16 @@ class tfCSDI(keras.Model):
 
         return loss_sum / self.num_steps
 
-    def calc_loss(self, observed_data, cond_mask, observed_mask, side_info, alpha_tf, noise, diff_ebd,is_train=1, set_t=-1):
+    def calc_loss(self, observed_data, cond_mask, observed_mask, side_info, is_train=1, set_t=-1):
 
-        noisy_data = (alpha_tf ** 0.5) * observed_data + (1.0 - alpha_tf) ** 0.5 * noise
+        noise = tf.random.uniform(tf.shape(observed_data), dtype=observed_data.dtype)
+        t = tf.random.uniform(shape=(tf.shape(observed_data)[0],), minval=0, maxval=self.num_steps, dtype=tf.int32)
+        current_alpha = tf.gather(self.alpha_torch, t, axis=0) # (B,1,1)
+        noisy_data = (current_alpha ** 0.5) * observed_data + (1.0 - current_alpha) ** 0.5 * noise
 
         total_input = self.set_input_to_diffmodel(noisy_data, observed_data, cond_mask)
 
-        predicted = self.diffmodel.call(total_input, side_info, diff_ebd)  # (B,K,L)
+        predicted = self.diffmodel.call(total_input, side_info, t)  # (B,K,L)
 
         target_mask = observed_mask - cond_mask
         residual = (noise - predicted) * target_mask
@@ -181,11 +194,10 @@ class tfCSDI(keras.Model):
 
         return total_input
 
-    def impute(self, observed_data, cond_mask, side_info):
-        B, K, L = observed_data.shape
-        imputed_samples = [] #tf.zeros([B, n_samples, K, L])  # .to(self.device)
+    def impute(self, observed_data, cond_mask, side_info, n_samples):
+        imputed_samples = []
 
-        for i in range(L):
+        for i in range(n_samples):
             # generate noisy observation for unconditional model
             if self.is_unconditional == True:
                 noisy_obs = observed_data
@@ -222,7 +234,7 @@ class tfCSDI(keras.Model):
         return imputed_samples
 
     def train_step(self, batch):
-        observed_data, observed_mask, gt_mask, for_pattern_mask, \
+        observed_data, observed_mask, _, \
         cond_mask, time_emb, time_fea, alpha_tf, noise, diff_ebd = batch[0]
         # observed_tp = tf.range((observed_mask.shape[1],1))
         is_train = 1
@@ -242,7 +254,17 @@ class tfCSDI(keras.Model):
         self.loss_tracker.update_state(loss)
         return {"loss": self.loss_tracker.result()}
 
-    # TODO evaluate
+    # TODO test_step
+    def test_step(self, batch):
+        observed_data, observed_mask, gt_mask, _, \
+        cond_mask, time_emb, time_fea, alpha_tf, noise, diff_ebd = batch[0]
+        n_samples = 100
+
+        cond_mask = gt_mask
+        target_mask = observed_mask - cond_mask
+        side_info = self.get_side_info(time_emb, cond_mask, time_fea)
+        samples = self.impute(observed_data, cond_mask, side_info, n_samples)
+
     # def evaluate(self, batch):
     #     observed_data, observed_mask, gt_mask, _, \
     #     cond_mask, time_emb, time_fea, alpha_tf, noise, diff_ebd = batch[0]
@@ -257,20 +279,3 @@ class tfCSDI(keras.Model):
     #
     #     return samples, observed_data, target_mask, observed_mask, observed_tp
 
-    # def process_data(self, batch):
-    #     # observed_data = tf.cast(batch["observed_data"], dtype=tf.float32)  # .to(self.device)
-    #     # observed_mask = tf.cast(batch["observed_mask"], dtype=tf.float32)
-    #     # observed_tp = tf.cast(batch["timepoints"], dtype=tf.float32)
-    #     # gt_mask = tf.cast(batch["gt_mask"], dtype=tf.float32)
-    #     observed_data, observed_mask, gt_mask, observed_tp = batch
-    #
-    #     observed_data = tf.transpose(observed_data, perm=[0, 2, 1])
-    #     observed_mask = tf.transpose(observed_mask, perm=[0, 2, 1])
-    #     gt_mask = tf.transpose(gt_mask, [0, 2, 1])
-    #
-    #     # cut_length = tf.zeros(observed_data.shape[0], dtype=tf.int64)
-    #     for_pattern_mask = observed_mask
-    #
-    #     return observed_data, observed_mask, observed_tp, gt_mask, for_pattern_mask #, cut_length
-    #
-    #

@@ -231,14 +231,7 @@ def swish(x):
     return x * keras.activations.sigmoid(x)
 
 
-# def _build_embedding(num_steps, dim=64):
-#     steps = tf.expand_dims(tf.range(num_steps), 1)  # (T,1)
-#     frequencies = 10.0 ** tf.expand_dims(tf.range(dim) / (dim - 1) * 4.0, 0)  # (1,dim)
-#     steps = tf.cast(steps, tf.float32)
-#     frequencies = tf.cast(frequencies, tf.float32)
-#     table = steps * frequencies  # (T,dim)
-#     table = tf.concat([tf.math.sin(table), tf.math.cos(table)], axis=1)  # (T,dim*2)
-#     return table
+
 
 
 class DiffusionEmbedding(keras.Model):
@@ -247,16 +240,25 @@ class DiffusionEmbedding(keras.Model):
         if projection_dim is None:
             projection_dim = embedding_dim
         # # TODO persistent?
-        # setattr(self, "embedding",
-        #         tf.Variable(_build_embedding(num_steps, int(embedding_dim / 2)), name="embedding", trainable=False))
+        setattr(self, "embedding",
+                tf.Variable(self._build_embedding(num_steps, int(embedding_dim / 2)), name="embedding", trainable=False))
         self.projection = keras.Sequential()
         self.projection.add(keras.layers.Dense(projection_dim, activation=swish))
         self.projection.add(keras.layers.Dense(projection_dim, activation=swish))
 
-    def call(self, diff_ebd):
-        x = diff_ebd
+    def call(self, t):
+        x = self.embedding[t]
         x = self.projection(x)
         return x
+
+    def _build_embedding(self, num_steps, dim=64):
+        steps = tf.expand_dims(tf.range(num_steps), 1)  # (T,1)
+        frequencies = 10.0 ** tf.expand_dims(tf.range(dim) / (dim - 1) * 4.0, 0)  # (1,dim)
+        steps = tf.cast(steps, tf.float32)
+        frequencies = tf.cast(frequencies, tf.float32)
+        table = steps * frequencies  # (T,dim)
+        table = tf.concat([tf.math.sin(table), tf.math.cos(table)], axis=1)  # (T,dim*2)
+        return table
 
 
 class diff_CSDI(keras.Model):
@@ -285,14 +287,14 @@ class diff_CSDI(keras.Model):
                 )
             )
 
-    def call(self, x, cond_info, diff_ebd):
+    def call(self, x, cond_info, t):
         B, inputdim, K, L = x.shape
         x = rearrange(x, 'i j k l -> i j (k l)')
         # x = tf.reshape(x, [B, inputdim, K * L])
         x = self.input_projection(x)
         x = rearrange(x, 'i j (k l) -> i j k l', k=K)
         # x = tf.reshape(x, [B, self.channels, K, L])
-
+        diff_ebd = self.diffusion_embedding.call(t)
         diffusion_emb = self.diffusion_embedding.call(diff_ebd)
 
         skip = []

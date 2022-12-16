@@ -140,7 +140,7 @@ class CSDIImputer:
                                   masking='rm')  # observed_values_tensor, observed_masks_tensor, gt_mask_tensor, timepoints
         train_data = self.process_data(train_data)
         model.compile(optimizer=optimizer)
-        history = model.fit(x=train_data, batch_size=32, epochs=20, validation_split=0.,
+        history = model.fit(x=train_data, batch_size=32, epochs=20, validation_split=0.1,
                                 callbacks=[tensorboard_callback,
                                          earlyStop_loss_callback,
                                          earlyStop_accu_call_back,
@@ -211,7 +211,7 @@ class CSDIImputer:
         diff_emb = self._build_embedding(self.config['diffusion']['num_steps'])
         diff_emb = tf.gather(diff_emb, t, axis=0)
 
-        return observed_data, observed_mask, gt_mask, for_pattern_mask, cond_mask, pe, time_fea, alpha_tf, noise, diff_emb #, cut_length
+        return observed_data, observed_mask, gt_mask, cond_mask, pe, time_fea, alpha_tf, noise, diff_emb #, cut_length
 
     def time_embedding(self, pos, d_model=128): # pos batch_size * seq_length
         pe = np.zeros(shape=[pos.shape[0], pos.shape[1], d_model])
