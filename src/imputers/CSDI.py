@@ -181,11 +181,11 @@ class tfCSDI(keras.Model):
 
         return total_input
 
-    def impute(self, observed_data, cond_mask, side_info, n_samples):
+    def impute(self, observed_data, cond_mask, side_info):
         B, K, L = observed_data.shape
-        imputed_samples = tf.zeros([B, n_samples, K, L])  # .to(self.device)
+        imputed_samples = [] #tf.zeros([B, n_samples, K, L])  # .to(self.device)
 
-        for i in range(n_samples):
+        for i in range(L):
             # generate noisy observation for unconditional model
             if self.is_unconditional == True:
                 noisy_obs = observed_data
@@ -217,8 +217,8 @@ class tfCSDI(keras.Model):
                                     (1.0 - self.alpha[t - 1]) / (1.0 - self.alpha[t]) * self.beta[t]
                             ) ** 0.5
                     current_sample += sigma * noise
-            imputed_samples[:, i] = current_sample  # .detach()
-
+            imputed_samples.append(current_sample)  # .detach()
+        imputed_samples = tf.stack(imputed_samples)
         return imputed_samples
 
     def train_step(self, batch):
@@ -243,18 +243,19 @@ class tfCSDI(keras.Model):
         return {"loss": self.loss_tracker.result()}
 
     # TODO evaluate
-    def evaluate(self, batch):
-        observed_data, observed_mask, gt_mask, _, \
-        cond_mask, time_emb, time_fea, alpha_tf, noise, diff_ebd = batch[0]
-        # with torch.no_grad():
-        cond_mask = gt_mask
-        target_mask = observed_mask - cond_mask
-        side_info = self.get_side_info(time_emb, cond_mask, time_fea)
-        samples = self.impute(observed_data, cond_mask, side_info, n_samples)
-        for i in range(len(cut_length)):
-            target_mask[i, ..., 0: cut_length[i].item()] = 0
-
-        return samples, observed_data, target_mask, observed_mask, observed_tp
+    # def evaluate(self, batch):
+    #     observed_data, observed_mask, gt_mask, _, \
+    #     cond_mask, time_emb, time_fea, alpha_tf, noise, diff_ebd = batch[0]
+    #     B, K, L = observed_data.shape
+    #     # with torch.no_grad():
+    #     cond_mask = gt_mask
+    #     target_mask = observed_mask - cond_mask
+    #     side_info = self.get_side_info(time_emb, cond_mask, time_fea)
+    #     samples = self.impute(observed_data, cond_mask, side_info, L)
+    #     for i in range(len(cut_length)):
+    #         target_mask[i, ..., 0: cut_length[i].item()] = 0
+    #
+    #     return samples, observed_data, target_mask, observed_mask, observed_tp
 
     # def process_data(self, batch):
     #     # observed_data = tf.cast(batch["observed_data"], dtype=tf.float32)  # .to(self.device)

@@ -127,12 +127,12 @@ class CSDIImputer:
         # define callback
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=self.log_path, histogram_freq=1)
         earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=3)
-        earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=3)
+        earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='accuracy', mode='max', patience=3)
         best_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
             filepath=self.model_path + '/' + current_time,
             save_weights_only=False,
-            monitor='accuracy',
-            mode='max',
+            monitor='loss',
+            mode='min',
             save_best_only=True,
         )
         # prepare data set
@@ -140,7 +140,7 @@ class CSDIImputer:
                                   masking='rm')  # observed_values_tensor, observed_masks_tensor, gt_mask_tensor, timepoints
         train_data = self.process_data(train_data)
         model.compile(optimizer=optimizer)
-        history = model.fit(x=train_data, batch_size=32, epochs=20, validation_split=0.1,
+        history = model.fit(x=train_data, batch_size=32, epochs=20, validation_split=0.,
                                 callbacks=[tensorboard_callback,
                                          earlyStop_loss_callback,
                                          earlyStop_accu_call_back,
