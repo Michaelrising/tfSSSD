@@ -221,7 +221,6 @@ class tfCSDI(keras.Model):
 
         return imputed_samples
 
-# TODO Train STEP
     def train_step(self, batch):
         observed_data, observed_mask, gt_mask, for_pattern_mask, \
         cond_mask, time_emb, time_fea, alpha_tf, noise, diff_ebd = batch[0]
@@ -244,12 +243,13 @@ class tfCSDI(keras.Model):
         return {"loss": self.loss_tracker.result()}
 
     # TODO evaluate
-    def evaluate(self, batch, n_samples):
-        (observed_data, observed_mask, observed_tp, gt_mask, _, cut_length) = self.process_data(batch)
+    def evaluate(self, batch):
+        observed_data, observed_mask, gt_mask, _, \
+        cond_mask, time_emb, time_fea, alpha_tf, noise, diff_ebd = batch[0]
         # with torch.no_grad():
         cond_mask = gt_mask
         target_mask = observed_mask - cond_mask
-        side_info = self.get_side_info(observed_tp, cond_mask)
+        side_info = self.get_side_info(time_emb, cond_mask, time_fea)
         samples = self.impute(observed_data, cond_mask, side_info, n_samples)
         for i in range(len(cut_length)):
             target_mask[i, ..., 0: cut_length[i].item()] = 0

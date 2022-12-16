@@ -211,7 +211,7 @@ class CSDIImputer:
         diff_emb = self._build_embedding(self.config['diffusion']['num_steps'])
         diff_emb = tf.gather(diff_emb, t, axis=0)
 
-        return observed_data, observed_mask, gt_mask, for_pattern_mask, cond_mask, pe, time_fea, alpha_tf, noise, diff_emb#, cut_length
+        return observed_data, observed_mask, gt_mask, for_pattern_mask, cond_mask, pe, time_fea, alpha_tf, noise, diff_emb #, cut_length
 
     def time_embedding(self, pos, d_model=128): # pos batch_size * seq_length
         pe = np.zeros(shape=[pos.shape[0], pos.shape[1], d_model])
@@ -354,7 +354,7 @@ if __name__ == "__main__":
     training_data = np.load('../datasets/Mujoco/train_mujoco.npy')
     # training_data = np.split(training_data, 160, 0)
     training_data = np.array(training_data)
-    training_data = tf.convert_to_tensor(training_data[:2000])
+    training_data = tf.convert_to_tensor(training_data[:1000])
     print('Data loaded')
     CSDIImputer = CSDIImputer(device, model_path, log_path, config_path)
     CSDIImputer.train(training_data)
