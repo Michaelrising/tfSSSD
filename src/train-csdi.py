@@ -115,7 +115,7 @@ class CSDIImputer:
             json.dump(self.config, f, indent=4)
 
         model = tfCSDI(series.shape[2], self.config, self.device)
-        # TODO keras compile fit and evaluate
+
         current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
         # define optimizer
         p1 = int(0.75 * epochs)
@@ -125,12 +125,12 @@ class CSDIImputer:
         learning_rate_fn = keras.optimizers.schedules.PiecewiseConstantDecay(boundaries, values)
         optimizer = keras.optimizers.Adam(learning_rate=learning_rate_fn, epsilon=1e-6)
         # define callback
-        tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=self.log_path, histogram_freq=1)
+        tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=self.log_path, histogram_freq=1, profile_batch = '500,520')
         earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=3)
-        earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='accuracy', mode='max', patience=3)
+        earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=3)
         best_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
             filepath=self.model_path + '/' + current_time,
-            save_weights_only=False,
+            save_weights_only=True,
             monitor='loss',
             mode='min',
             save_best_only=True,
@@ -140,7 +140,7 @@ class CSDIImputer:
                                   masking='rm')  # observed_values_tensor, observed_masks_tensor, gt_mask_tensor, timepoints
         train_data = self.process_data(train_data)
         model.compile(optimizer=optimizer)
-        history = model.fit(x=train_data, batch_size=32, epochs=20, validation_split=0.,
+        history = model.fit(x=train_data, batch_size=16, epochs=5, validation_split=0.,
                                 callbacks=[tensorboard_callback,
                                          earlyStop_loss_callback,
                                          earlyStop_accu_call_back,
