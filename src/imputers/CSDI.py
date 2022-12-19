@@ -242,8 +242,7 @@ class tfCSDI(keras.Model):
         return imputed_samples
 
     def train_step(self, batch):
-        observed_data, observed_mask, _, \
-        cond_mask, _, _, alpha_tf, noise, diff_ebd = batch[0]
+        observed_data, observed_mask, _, cond_mask = batch[0]
         B, K, L = cond_mask.shape
         observed_tp = tf.reshape(tf.range(L), [1, L])
         # observed_tp = einops.repeat(observed_tp, 'i -> k i', k=tf.shape(observed_data)[0]) # B L
@@ -253,7 +252,7 @@ class tfCSDI(keras.Model):
         with tf.GradientTape() as tape:
             # tape.watch(learnable_params)
             side_info = self.get_side_info(observed_tp, cond_mask)
-            loss = self.calc_loss(observed_data, cond_mask, observed_mask, side_info, diff_ebd, is_train)
+            loss = self.calc_loss(observed_data, cond_mask, observed_mask, side_info)
 
         learnable_params = (
                 self.embed_layer.trainable_variables + self.diffmodel.trainable_variables
@@ -267,13 +266,13 @@ class tfCSDI(keras.Model):
 
     # TODO test_step
     def test_step(self, batch):
-        observed_data, observed_mask, gt_mask, _, \
-        cond_mask, time_emb, time_fea, alpha_tf, noise, diff_ebd = batch[0]
+        observed_data, observed_mask, gt_mask, _ = batch[0]
         n_samples = 100
-
         cond_mask = gt_mask
+        B, K, L = cond_mask.shape
+        observed_tp = tf.reshape(tf.range(L), [1, L])
         target_mask = observed_mask - cond_mask
-        side_info = self.get_side_info(time_emb, cond_mask, time_fea)
+        side_info = self.get_side_info(observed_tp, cond_mask)
         samples = self.impute(observed_data, cond_mask, side_info, n_samples)
 
     # def evaluate(self, batch):
