@@ -247,7 +247,7 @@ class DiffusionEmbedding(keras.Model):
         self.projection.add(keras.layers.Dense(projection_dim, activation=swish))
 
     def call(self, t):
-        x = self.embedding[t]
+        x = tf.gather(self.embedding, t)
         x = self.projection(x)
         return x
 
@@ -294,8 +294,7 @@ class diff_CSDI(keras.Model):
         x = self.input_projection(x)
         x = rearrange(x, 'i j (k l) -> i j k l', k=K)
         # x = tf.reshape(x, [B, self.channels, K, L])
-        diff_ebd = self.diffusion_embedding.call(t)
-        diffusion_emb = self.diffusion_embedding.call(diff_ebd)
+        diffusion_emb = self.diffusion_embedding.call(t)
 
         skip = []
         for layer in self.residual_layers:
