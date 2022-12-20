@@ -1,4 +1,4 @@
-./datasets/Electricity
+./datasets/Electricity/
 *_electricity.npy
 *.log
 *.pb
@@ -6,4 +6,5 @@
 ./log
 *.index
 *.lambda-dual.737831.0.v2
-events*
+log/mujoco/CSDI/train/
+log/mujoco/CSDI/validation/
