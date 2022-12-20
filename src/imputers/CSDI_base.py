@@ -287,7 +287,8 @@ class diff_CSDI(keras.Model):
                 )
             )
 
-    def call(self, x, cond_info, t):
+    @tf.function
+    def __call__(self, x, cond_info, t):
         B, inputdim, K, L = x.shape
         x = rearrange(x, 'i j k l -> i j (k l)')
         # x = tf.reshape(x, [B, inputdim, K * L])

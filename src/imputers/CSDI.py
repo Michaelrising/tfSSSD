@@ -283,6 +283,7 @@ class tfCSDI(keras.Model):
             loss = self.loss_fn(observed_data, cond_mask, observed_mask, side_info, is_train=False, set_t=t)
             loss_sum += loss
 
+
         val_loss = loss_sum / self.num_steps
         self.val_loss_tracker.update_state(val_loss)
         return {"val_loss": self.val_loss_tracker.result()}

@@ -1,8 +1,9 @@
-./datasets
-*.npy
+./datasets/Electricity
+*_electricity.npy
 *.log
 *.pb
 ./results
 ./log
 *.index
 *.lambda-dual.737831.0.v2
+events*
