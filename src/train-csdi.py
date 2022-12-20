@@ -27,7 +27,7 @@ class CSDIImputer:
               missing_ratio_or_k=0.1,
               train_split=0.7,
               valid_split=0.2,
-              epochs=200,
+              epochs=20,
               samples_generate=10,
               batch_size=16,
               lr=1.0e-3,
@@ -116,7 +116,6 @@ class CSDIImputer:
 
         model = tfCSDI(series.shape[2], self.config, self.device)
 
-        current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
         # define optimizer
         p1 = int(0.75 * epochs)
         p2 = int(0.9 * epochs)
@@ -129,7 +128,7 @@ class CSDIImputer:
         earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=3)
         earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=3)
         best_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-            filepath=self.model_path + '/' + current_time,
+            filepath=self.model_path,
             save_weights_only=True,
             monitor='loss',
             mode='min',
@@ -140,7 +139,7 @@ class CSDIImputer:
                                   masking='rm')  # observed_values_tensor, observed_masks_tensor, gt_mask_tensor, timepoints
         train_data = self.process_data(train_data)
         model.compile(optimizer=optimizer)
-        history = model.fit(x=train_data, batch_size=16, epochs=5, validation_split=0.,
+        history = model.fit(x=train_data, batch_size=16, epochs=5, validation_split=0.1,
                                 callbacks=[tensorboard_callback,
                                          earlyStop_loss_callback,
                                          earlyStop_accu_call_back,
@@ -210,65 +209,59 @@ class CSDIImputer:
         path_load_model: load model weights
         path_config: load configuration file
         '''
-    #
-    # def impute(self,
-    #            sample,
-    #            mask,
-    #            device,
-    #            n_samples=50,
-    #
-    #            ):
-    #
-    #     '''
-    #     Imputation function
-    #     sample: sample(s) to be imputed (Samples, Length, Channel)
-    #     mask: mask where values to be imputed. 0's to impute, 1's to remain.
-    #     n_samples: number of samples to be generated
-    #     return imputations with shape (Samples, N imputed samples, Length, Channel)
-    #     '''
-    #
-    #     if len(sample.shape) == 2:
-    #         self.series_impute = tf.convert_to_tensor(np.expand_dims(sample, axis=0))
-    #     elif len(sample.shape) == 3:
-    #         self.series_impute = sample
-    #
-    #     self.device = device  # torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    #
-    #     with open(self.path_config, "r") as f:
-    #         config = json.load(f)
-    #
-    #     testData = ImputeDataset(sample, mask)
-    #     # test_loader = get_dataloader_impute(series=self.series_impute, len_dataset=len(self.series_impute),
-    #     #                                     mask=mask, batch_size=config['train']['batch_size'])
-    #
-    #     # model = CSDI_Custom(config, self.device, target_dim=self.series_impute.shape[2])  # .to(self.device)
-    #     model = tfCSDI(sample.shape[2], config, self.device)
-    #
-    #     # model.load_state_dict(torch.load((self.path_load_model_dic)))
-    #     model.load(self.path_load_model_dic)
-    #
-    #     imputations = evaluate(model=model,
-    #                            test_loader=test_loader,
-    #                            nsample=n_samples,
-    #                            scaler=1,
-    #                            path_save='')
-    #
-    #     indx_imputation = tf.cast(~mask, tf.bool)
-    #
-    #     original_sample_replaced = []
-    #
-    #     for original_sample, single_n_samples in zip(sample.numpy(),
-    #                                                  imputations):  # [x,x,x] -> [x,x] & [x,x,x,x] -> [x,x,x]
-    #         single_sample_replaced = []
-    #         for sample_generated in single_n_samples:  # [x,x] & [x,x,x] -> [x,x]
-    #             sample_out = original_sample.copy()
-    #             sample_out[indx_imputation] = sample_generated[indx_imputation]
-    #             single_sample_replaced.append(sample_out)
-    #         original_sample_replaced.append(single_sample_replaced)
-    #
-    #     output = np.array(original_sample_replaced)
-    #
-    #     return output
+
+    def imputer(self,
+               sample,
+               mask,
+               device,
+               n_samples=50,
+               ):
+
+        '''
+        Imputation function
+        sample: sample(s) to be imputed (Samples, Length, Channel)
+        mask: mask where values to be imputed. 0's to impute, 1's to remain.
+        n_samples: number of samples to be generated
+        return imputations with shape (Samples, N imputed samples, Length, Channel)
+        '''
+
+        if len(sample.shape) == 2:
+            self.series_impute = tf.convert_to_tensor(np.expand_dims(sample, axis=0))
+        elif len(sample.shape) == 3:
+            self.series_impute = sample
+
+        self.device = device  # torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        with open(self.path_config, "r") as f:
+            config = json.load(f)
+
+        # prepare data set
+        test_data = ImputeDataset(sample, mask)  # observed_values_tensor, observed_masks_tensor, gt_mask_tensor
+        test_data = self.process_data(test_data) # observed_data, observed_mask, gt_mask, cond_mask
+
+        model = tfCSDI(sample.shape[2], config, self.device)
+
+        # model.load_state_dict(torch.load((self.path_load_model_dic)))
+        model.load(self.path_load_model_dic)
+
+        imputations = model.impute(test_data, n_samples)
+
+        indx_imputation = tf.cast(~mask, tf.bool)
+
+        original_sample_replaced = []
+
+        for original_sample, single_n_samples in zip(sample.numpy(),
+                                                     imputations):  # [x,x,x] -> [x,x] & [x,x,x,x] -> [x,x,x]
+            single_sample_replaced = []
+            for sample_generated in single_n_samples:  # [x,x] & [x,x,x] -> [x,x]
+                sample_out = original_sample.copy()
+                sample_out[indx_imputation] = sample_generated[indx_imputation]
+                single_sample_replaced.append(sample_out)
+            original_sample_replaced.append(single_sample_replaced)
+
+        output = np.array(original_sample_replaced)
+
+        return output
 
 
 if __name__ == "__main__":
@@ -286,8 +279,9 @@ if __name__ == "__main__":
     #         # Memory growth must be set before GPUs have been initialized
     #         print(e)
     device = '/cpu:0'
-    model_path = '../results/mujoco/CSDI'
-    log_path = '../log/mujoco/CSDI'
+    current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+    model_path = '../results/mujoco/CSDI/' + current_time
+    log_path = '../log/mujoco/CSDI/' + current_time
     config_path = './config'
     if not os.path.exists(model_path):
         os.makedirs(model_path)

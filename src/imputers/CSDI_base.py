@@ -134,11 +134,6 @@ def TrainDataset(series, missing_ratio_or_k=0.0, masking='rm'):
     observed_values_tensor = tf.stack(observed_values_list)
     observed_masks_tensor = tf.stack(observed_masks_list)
     gt_mask_tensor = tf.stack(gt_masks_list)
-    # timepoints = tf.convert_to_tensor(np.arange(length))
-
-    # data_dict = {"observed_data": observed_values_tensor, "observed_mask": observed_masks_tensor,
-    #              "gt_mask": gt_mask_tensor} #, "timepoints": timepoints}
-
     return [observed_values_tensor, observed_masks_tensor, gt_mask_tensor]
 
 
@@ -166,53 +161,8 @@ def ImputeDataset(series, mask):
     observed_values_tensor = tf.convert_to_tensor(np.stack(observed_values_list))
     observed_masks_tensor = tf.convert_to_tensor(np.stack(observed_masks_list))
     gt_masks_tensor = tf.convert_to_tensor(np.stack(gt_masks_list))
-    data_dict = {"observed_data": observed_values_tensor, "observed_mask": observed_masks_tensor,
-                 "gt_mask": gt_masks_tensor}
 
-    return data_dict
-
-
-# TODO transformer keras
-def transformer_encoder(inputs, head_size, num_heads, ff_dim, activation, dropout=0):
-    # Normalization and Attention
-    x = keras.layers.LayerNormalization(epsilon=1e-6)(inputs)
-    x = keras.layers.MultiHeadAttention(
-        key_dim=head_size, num_heads=num_heads, dropout=dropout
-    )(x, x)
-    x = keras.layers.Dropout(dropout)(x)
-    res = x + inputs
-
-    # Feed Forward Part
-    x = keras.layers.LayerNormalization(epsilon=1e-6)(res)
-    x = keras.layers.Dense(inputs.shape[-1])(x)
-    x = keras.layers.Dropout(dropout)(x)
-    x = keras.layers.Dense(inputs.shape[-1])(x)
-    return x + res
-
-
-def TransformerEncoder(
-        input_shape,
-        out_shape,
-        head_size,
-        num_heads,
-        ff_dim,
-        num_transformer_blocks,
-        mlp_units,
-        activation,
-        dropout=0,
-        mlp_dropout=0,
-):
-    inputs = keras.Input(shape=(None, input_shape,)) # (batch size, sequence length, features)
-    x = inputs
-    for _ in range(num_transformer_blocks):
-        x = transformer_encoder(x, head_size, num_heads, ff_dim, activation, dropout)
-
-    # x = keras.layers.GlobalAveragePooling1D(data_format="channels_last")(x)
-    for dim in mlp_units:
-        x = keras.layers.Dense(dim, activation="relu")(x)
-        x = keras.layers.Dropout(mlp_dropout)(x)
-    outputs = keras.layers.Dense(out_shape, activation="softmax")(x)
-    return keras.Model(inputs, outputs)
+    return [observed_values_tensor, observed_masks_tensor, gt_masks_tensor]
 
 
 def get_torch_trans(heads=8, layers=1, in_channels=64, out_channels=64):
@@ -229,9 +179,6 @@ def Conv1d_with_init(in_channels, out_channels, kernel_size, initializer=None, a
 
 def swish(x):
     return x * keras.activations.sigmoid(x)
-
-
-
 
 
 class DiffusionEmbedding(keras.Model):

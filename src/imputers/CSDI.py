@@ -199,7 +199,14 @@ class tfCSDI(keras.Model):
 
         return total_input
 
-    def impute(self, observed_data, cond_mask, side_info, n_samples):
+    def impute(self, batch, n_samples):
+        observed_data, observed_mask, gt_mask, _ = batch[0]
+        cond_mask = gt_mask
+        B, K, L = observed_data.shape
+        observed_tp = tf.reshape(tf.range(L), [1, L])  # 1 L
+        observed_tp = tf.tile(observed_tp, [tf.shape(observed_data)[0], 1])  # B L
+
+        side_info = self.get_side_info(observed_tp, cond_mask)
         imputed_samples = []
 
         for i in range(n_samples):
@@ -286,7 +293,7 @@ class tfCSDI(keras.Model):
 
         val_loss = loss_sum / self.num_steps
         self.val_loss_tracker.update_state(val_loss)
-        return {"val_loss": self.val_loss_tracker.result()}
+        return {"loss": self.val_loss_tracker.result()}
 
     # def evaluate(self, batch):
     #     observed_data, observed_mask, gt_mask, _, \
