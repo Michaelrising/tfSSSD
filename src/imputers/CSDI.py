@@ -256,6 +256,7 @@ class tfCSDI(keras.Model):
 
     def train_step(self, batch):
         observed_data, observed_mask, _, cond_mask = batch[0]
+        # observation mask denotes the original data missing, gt_masks is manmade mask
         is_train = 1
         B, K, L = cond_mask.shape
         observed_tp = tf.reshape(tf.range(L), [1, L])
@@ -278,6 +279,7 @@ class tfCSDI(keras.Model):
 
     def test_step(self, batch):
         observed_data, observed_mask, gt_mask, _ = batch[0]
+        # observation mask denotes the original data missing, gt_masks is manmade mask
         cond_mask = gt_mask
         B, K, L = observed_data.shape
         observed_tp = tf.reshape(tf.range(L), [1, L])# 1 L
@@ -289,7 +291,6 @@ class tfCSDI(keras.Model):
         for t in range(self.num_steps):  # calculate loss for all t
             loss = self.loss_fn(observed_data, cond_mask, observed_mask, side_info, is_train=False, set_t=t)
             loss_sum += loss
-
 
         val_loss = loss_sum / self.num_steps
         self.val_loss_tracker.update_state(val_loss)

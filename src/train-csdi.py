@@ -23,11 +23,12 @@ class CSDIImputer:
 
     def train(self,
               series,
+              validation_series=None,
               masking='rm',
               missing_ratio_or_k=0.1,
               train_split=0.7,
               valid_split=0.2,
-              epochs=20,
+              epochs=50,
               samples_generate=10,
               batch_size=16,
               lr=1.0e-3,
@@ -117,14 +118,15 @@ class CSDIImputer:
         model = tfCSDI(series.shape[2], self.config, self.device)
 
         # define optimizer
-        p1 = int(0.75 * epochs)
-        p2 = int(0.9 * epochs)
-        boundaries = [p1, p2]
-        values = [lr, lr * 0.1, lr * 0.1 * 0.1]
+        p1 = int(0.5 * epochs)
+        p2 = int(0.65 * epochs)
+        p3 = int(0.85 * epochs)
+        boundaries = [p1, p2, p3]
+        values = [lr, lr * 0.1, lr * 0.1 * 0.1, lr * 0.1 * 0.1 * 0.1]
         learning_rate_fn = keras.optimizers.schedules.PiecewiseConstantDecay(boundaries, values)
         optimizer = keras.optimizers.Adam(learning_rate=learning_rate_fn, epsilon=1e-6)
         # define callback
-        tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=self.log_path, histogram_freq=1, profile_batch = '500,520')
+        tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=self.log_path, histogram_freq=1, profile_batch=10)
         earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=3)
         earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=3)
         best_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
@@ -138,11 +140,16 @@ class CSDIImputer:
         train_data = TrainDataset(series, missing_ratio_or_k=0.1,
                                   masking='rm')  # observed_values_tensor, observed_masks_tensor, gt_mask_tensor, timepoints
         train_data = self.process_data(train_data)
+        if validation_series is not None:
+            validation_data = TrainDataset(validation_series, missing_ratio_or_k=0.1,
+                                  masking='rm')
+            validation_data = self.process_data(validation_data)
+        else:
+            validation_data = None
         model.compile(optimizer=optimizer)
-        history = model.fit(x=train_data, batch_size=16, epochs=5, validation_split=0.1,
+        history = model.fit(x=train_data, batch_size=16, epochs=200, validation_data=(validation_data, ),
                                 callbacks=[tensorboard_callback,
                                          earlyStop_loss_callback,
-                                         earlyStop_accu_call_back,
                                          best_checkpoint_callback])
 
         # Visualize the training progress of the model.
@@ -196,12 +203,10 @@ class CSDIImputer:
                 cond_mask[i] = cond_mask[i] * for_pattern_mask[i - 1]
         return cond_mask
 
-    def load_weights(self,
-                     path_load_model='',
-                     path_config=''):
+    def load_weights(self, path_config_name= "/config_csdi_training.json"):
 
-        self.path_load_model_dic = path_load_model
-        self.path_config = path_config
+        self.path_load_model_dic = self.model_path
+        self.path_config = self.config_path + path_config_name
 
         '''
         Load weights and configuration file for inference.
@@ -214,7 +219,7 @@ class CSDIImputer:
                sample,
                mask,
                device,
-               n_samples=50,
+               n_samples=100,
                ):
 
         '''
@@ -230,7 +235,7 @@ class CSDIImputer:
         elif len(sample.shape) == 3:
             self.series_impute = sample
 
-        self.device = device  # torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device
 
         with open(self.path_config, "r") as f:
             config = json.load(f)
@@ -265,23 +270,23 @@ class CSDIImputer:
 
 
 if __name__ == "__main__":
-    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-    # os.environ['TF_GPU_ALLOCATOR']='cuda_malloc_async'
-    # gpus = tf.config.list_physical_devices('GPU')
-    # if gpus:
-    #     try:
-    #         # Currently, memory growth needs to be the same across GPUs
-    #         for gpu in gpus:
-    #             tf.config.experimental.set_memory_growth(gpu, True)
-    #         logical_gpus = tf.config.list_logical_devices('GPU')
-    #         print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-    #     except RuntimeError as e:
-    #         # Memory growth must be set before GPUs have been initialized
-    #         print(e)
-    device = '/cpu:0'
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    os.environ['TF_GPU_ALLOCATOR']='cuda_malloc_async'
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        try:
+            # Currently, memory growth needs to be the same across GPUs
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            logical_gpus = tf.config.list_logical_devices('GPU')
+            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+        except RuntimeError as e:
+            # Memory growth must be set before GPUs have been initialized
+            print(e)
+    device = '/gpu:0'
     current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-    model_path = '../results/mujoco/CSDI/' + current_time
-    log_path = '../log/mujoco/CSDI/' + current_time
+    model_path = '../results/mujoco/CSDI/' + current_time + '/csdi_model'
+    log_path = '../log/mujoco/CSDI/' + current_time + '/csdi_log'
     config_path = './config'
     if not os.path.exists(model_path):
         os.makedirs(model_path)
@@ -290,10 +295,13 @@ if __name__ == "__main__":
     if not os.path.exists(config_path):
         os.makedirs(config_path)
 
-    training_data = np.load('../datasets/Mujoco/train_mujoco.npy')
+    all_data = np.load('../datasets/Mujoco/train_mujoco.npy')
     # training_data = np.split(training_data, 160, 0)
-    training_data = np.array(training_data)
-    training_data = tf.convert_to_tensor(training_data[:1000])
+    all_data = np.array(all_data)
+    training_data = tf.convert_to_tensor(all_data[:7000])
+    validation_data = tf.convert_to_tensor(all_data[7000:])
     print('Data loaded')
     CSDIImputer = CSDIImputer(device, model_path, log_path, config_path)
-    CSDIImputer.train(training_data)
+    CSDIImputer.train(training_data, validation_data)
+    # test_data = tf.convert_to_tensor(training_data[7000:])
+    # CSDIImputer.imputer()
