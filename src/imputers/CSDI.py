@@ -183,7 +183,7 @@ class tfCSDI(keras.Model):
         loss = tf.reduce_sum(residual ** 2)
         loss = tf.cond(
             num_eval > 0,
-            true_fn = lambda: loss/num_eval,
+            true_fn= lambda: loss/num_eval,
             false_fn= lambda: loss
         )
 
@@ -254,6 +254,7 @@ class tfCSDI(keras.Model):
         self.optimizer = optimizer
         self.loss_fn = self.compute_loss
 
+    # @tf.function
     def train_step(self, batch):
         observed_data, observed_mask, _, cond_mask = batch[0]
         # observation mask denotes the original data missing, gt_masks is manmade mask
@@ -287,12 +288,16 @@ class tfCSDI(keras.Model):
 
         side_info = self.get_side_info(observed_tp, cond_mask)
         # loss = self.calc_loss_valid(observed_data, cond_mask, observed_mask, side_info, is_train=False)
-        loss_sum = 0
-        for t in range(self.num_steps):  # calculate loss for all t
-            loss = self.loss_fn(observed_data, cond_mask, observed_mask, side_info, is_train=False, set_t=t)
-            loss_sum += loss
+        loss_sum = tf.zeros(1, dtype=tf.float32)
+        c = lambda t, loss_sum: tf.less(t, self.num_steps)
+        b = lambda t, loss_sum: (t+1, tf.add(loss_sum, self.loss_fn(observed_data, cond_mask, observed_mask, side_info, is_train=False, set_t=t)))
+        loop_vars = (0, loss_sum)
+        T, LOSS_SUM = tf.while_loop(c, b, loop_vars)
+        # for t in range(self.num_steps):  # calculate loss for all t
+        #     loss = self.loss_fn(observed_data, cond_mask, observed_mask, side_info, is_train=False, set_t=t)
+        #     loss_sum += loss
 
-        val_loss = loss_sum / self.num_steps
+        val_loss = LOSS_SUM / self.num_steps
         self.val_loss_tracker.update_state(val_loss)
         return {"loss": self.val_loss_tracker.result()}
 
