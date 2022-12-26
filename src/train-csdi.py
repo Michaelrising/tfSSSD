@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 import os
 import json
 from datetime import datetime
+from einops import rearrange
+import tensorflow_probability as tfp
 
 class CSDIImputer:
     def __init__(self, device, model_path, log_path, config_path):
@@ -14,6 +16,7 @@ class CSDIImputer:
         self.model_path = model_path
         self.log_path = log_path
         self.config_path = config_path
+        self.batch_size = 16
 
         '''
         CSDI imputer
@@ -133,7 +136,7 @@ class CSDIImputer:
         earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=10)
         best_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
             filepath=self.model_path,
-            save_weights_only=True,
+            save_weights_only=False,
             monitor='loss',
             mode='min',
             save_best_only=True,
@@ -141,7 +144,7 @@ class CSDIImputer:
         # prepare data set
         train_data = TrainDataset(series, missing_ratio_or_k=0.1,
                                   masking='rm')  # observed_values_tensor, observed_masks_tensor, gt_mask_tensor
-        train_data = self.process_data(train_data)
+        train_data = self.process_data(train_data) # observed_data, observed_mask, gt_mask, cond_mask
         if validation_series is not None:
             validation_data = TrainDataset(validation_series, missing_ratio_or_k=0.1,
                                   masking='rm')
@@ -149,7 +152,7 @@ class CSDIImputer:
         else:
             validation_data = None
         model.compile(optimizer=optimizer)
-        history = model.fit(x=train_data, batch_size=16, epochs=epochs, validation_data=(validation_data, ),
+        history = model.fit(x=train_data, batch_size=self.batch_size, epochs=epochs, validation_data=(validation_data, ),
                                 callbacks=[tensorboard_callback,
                                          earlyStop_loss_callback,
                                          best_checkpoint_callback])
@@ -159,6 +162,7 @@ class CSDIImputer:
         plt.grid()
         plt.title("Loss")
         plt.show()
+        return train_data, validation_data # ,history
 
     def process_data(self, train_data):
         # observed_masks is the original missing, while gt_masks is the
@@ -223,11 +227,11 @@ class CSDIImputer:
         '''
 
     def imputer(self,
-               sample,
-               mask,
                device,
+               sample=None,
+               gt_mask=None,
+               ob_masks=None,
                n_samples=100,
-               batch_size=32
                ):
 
         '''
@@ -237,20 +241,15 @@ class CSDIImputer:
         n_samples: number of samples to be generated
         return imputations with shape (Samples, N imputed samples, Length, Channel)
         '''
-
-        if len(sample.shape) == 2:
-            self.series_impute = tf.convert_to_tensor(np.expand_dims(sample, axis=0))
-        elif len(sample.shape) == 3:
-            self.series_impute = sample
-
         self.device = device
 
-        with open(self.path_config, "r") as f:
+        with open(self.config_path + "/config_csdi_training.json", "r") as f:
             config = json.load(f)
 
         # prepare data set
-        test_data = np.split(sample, int(sample.shape[0]/batch_size), 0)
-        test_masks = np.split(mask, int(sample.shape[0]/batch_size), 0)
+        test_data = tf.split(sample, int(sample.shape[0]/self.batch_size), 0)
+        test_gt_masks = tf.split(gt_mask, int(sample.shape[0]/self.batch_size), 0)
+        test_ob_masks = tf.split(ob_masks,  int(sample.shape[0]/self.batch_size), 0)
         mse_total = 0
         mae_total = 0
         evalpoints_total = 0
@@ -265,30 +264,34 @@ class CSDIImputer:
         model = tfCSDI(sample.shape[2], config, self.device)
 
         # model.load_state_dict(torch.load((self.path_load_model_dic)))
-        model.load(self.path_load_model_dic)
+        model.load_weights(self.model_path)
 
-        for test_batch, test_mask_batch in zip(test_data, test_masks):
-            test_batch = ImputeDataset(test_batch, test_mask_batch)  # observed_values_tensor, observed_masks_tensor, gt_mask_tensor
+        for i in range( int(sample.shape[0]/self.batch_size)):
+            test_batch = (test_data[i], test_ob_masks[i], test_gt_masks[i])
             test_batch = self.process_data(test_batch)  # observed_data, observed_mask, gt_mask, cond_mask
             samples, c_target, eval_points, observed_points, observed_time = model.impute(test_batch, n_samples)
-            samples = samples.permute(0, 1, 3, 2)  # (B,nsample,L,K)
-            c_target = c_target.permute(0, 2, 1)  # (B,L,K)
-            eval_points = eval_points.permute(0, 2, 1)
-            observed_points = observed_points.permute(0, 2, 1)
+            # samples = samples.permute(0, 1, 3, 2)
+            samples = rearrange(samples, 'i j k l -> i j l k')  # (B,nsample,L,K)
+            c_target = rearrange(c_target, 'i j k -> i k j')  # (B,L,K)
+            # c_target = c_target.permute(0, 2, 1)
+            eval_points = rearrange(eval_points, 'i j k -> i k j')
+            # eval_points = eval_points.permute(0, 2, 1)
+            observed_points = rearrange(observed_points, 'i j k -> i k j')
+            # observed_points = observed_points.permute(0, 2, 1)
 
-            samples_median = samples.median(dim=1)
+            samples_median = tfp.stats.percentile(samples, 50., axis=1)
             all_target.append(c_target)
             all_evalpoint.append(eval_points)
             all_observed_point.append(observed_points)
             all_observed_time.append(observed_time)
             all_generated_samples.append(samples)
 
-            mse_current = (((samples_median.values - c_target) * eval_points) ** 2)
-            mae_current = (tf.abs((samples_median.values - c_target) * eval_points))
+            mse_current = (((samples_median - c_target) * eval_points) ** 2)
+            mae_current = (tf.abs((samples_median - c_target) * eval_points))
 
-            mse_total += mse_current.sum().item()
-            mae_total += mae_current.sum().item()
-            evalpoints_total += eval_points.sum().item()
+            mse_total += tf.reduce_sum(mse_current)
+            mae_total += tf.reduce_sum(mae_current)
+            evalpoints_total += tf.reduce_sum(eval_points)
 
         imputations = tf.concat(all_generated_samples)
         indx_imputation = tf.cast(~mask, tf.bool)
@@ -296,7 +299,7 @@ class CSDIImputer:
         original_sample_replaced = []
 
         for original_sample, single_n_samples in zip(sample.numpy(),
-                                                     imputations):  # [x,x,x] -> [x,x] & [x,x,x,x] -> [x,x,x]
+                                                     imputations.numpy()):  # [x,x,x] -> [x,x] & [x,x,x,x] -> [x,x,x]
             single_sample_replaced = []
             for sample_generated in single_n_samples:  # [x,x] & [x,x,x] -> [x,x]
                 sample_out = original_sample.copy()
@@ -310,20 +313,20 @@ class CSDIImputer:
 
 
 if __name__ == "__main__":
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-    os.environ['TF_GPU_ALLOCATOR']='cuda_malloc_async'
-    gpus = tf.config.list_physical_devices('GPU')
-    if gpus:
-        try:
-            # Currently, memory growth needs to be the same across GPUs
-            for gpu in gpus:
-                tf.config.experimental.set_memory_growth(gpu, True)
-            logical_gpus = tf.config.list_logical_devices('GPU')
-            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-        except RuntimeError as e:
-            # Memory growth must be set before GPUs have been initialized
-            print(e)
-    device = '/gpu:0'
+    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    # os.environ['TF_GPU_ALLOCATOR']='cuda_malloc_async'
+    # gpus = tf.config.list_physical_devices('GPU')
+    # if gpus:
+    #     try:
+    #         # Currently, memory growth needs to be the same across GPUs
+    #         for gpu in gpus:
+    #             tf.config.experimental.set_memory_growth(gpu, True)
+    #         logical_gpus = tf.config.list_logical_devices('GPU')
+    #         print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+    #     except RuntimeError as e:
+    #         # Memory growth must be set before GPUs have been initialized
+    #         print(e)
+    device = '/cpu:0'
     current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
     model_path = '../results/mujoco/CSDI/' + current_time + '/csdi_model'
     log_path = '../log/mujoco/CSDI/' + current_time + '/csdi_log'
@@ -338,10 +341,11 @@ if __name__ == "__main__":
     all_data = np.load('../datasets/Mujoco/train_mujoco.npy')
     # training_data = np.split(training_data, 160, 0)
     all_data = np.array(all_data)
-    training_data = tf.convert_to_tensor(all_data[:7000])
-    validation_data = tf.convert_to_tensor(all_data[7000:])
+    training_data = tf.convert_to_tensor(all_data[:6992])
+    validation_data = tf.convert_to_tensor(all_data[6992:])
     print('Data loaded')
     CSDIImputer = CSDIImputer(device, model_path, log_path, config_path)
-    CSDIImputer.train(training_data, validation_data)
+    train_data, validation_data = CSDIImputer.train(training_data, validation_data)
     # test_data = tf.convert_to_tensor(training_data[7000:])
-    # CSDIImputer.imputer()
+    observed_data, ob_mask, gt_mask, _ = train_data
+    CSDIImputer.imputer(device=device, sample=observed_data, gt_mask=gt_mask, ob_masks=ob_mask)
