@@ -40,14 +40,17 @@ def calc_quantile_CRPS(target, forecast, eval_points, mean_scaler, scaler):
 
 def mask_missing_train_rm(data, missing_ratio=0.0):
     observed_values = np.array(data)
-    observed_masks = ~np.isnan(observed_values)
+    observed_masks = ~np.isnan(observed_values) # observed masks: 1: not missing, 0: missing
 
     masks = observed_masks.reshape(-1).copy()
-    obs_indices = np.where(masks)[0].tolist()
+    obs_indices = np.where(masks)[0].tolist() # observed data's indices(non-missing)
     miss_indices = np.random.choice(obs_indices, int(len(obs_indices) * missing_ratio), replace=False)
+    # generated missing indices from the not missing indices
     masks[miss_indices] = False
     gt_masks = masks.reshape(observed_masks.shape)
-    observed_values = np.nan_to_num(observed_values)
+    # gt_masks has two parts: the generated missing masks and the true missing masks
+    # reflecting the pattern of the true missing distribution
+    observed_values = np.nan_to_num(observed_values) # nan to 0
     observed_masks = observed_masks.astype("float32")
     gt_masks = gt_masks.astype("float32")
 

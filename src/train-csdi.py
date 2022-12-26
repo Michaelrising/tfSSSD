@@ -1,3 +1,5 @@
+import numpy as np
+
 from imputers.CSDI import *
 import matplotlib.pyplot as plt
 import os
@@ -127,8 +129,8 @@ class CSDIImputer:
         optimizer = keras.optimizers.Adam(learning_rate=learning_rate_fn, epsilon=1e-6)
         # define callback
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=self.log_path, histogram_freq=1, profile_batch=10)
-        earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=3)
-        earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=3)
+        earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=10)
+        earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=10)
         best_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
             filepath=self.model_path,
             save_weights_only=True,
@@ -138,7 +140,7 @@ class CSDIImputer:
         )
         # prepare data set
         train_data = TrainDataset(series, missing_ratio_or_k=0.1,
-                                  masking='rm')  # observed_values_tensor, observed_masks_tensor, gt_mask_tensor, timepoints
+                                  masking='rm')  # observed_values_tensor, observed_masks_tensor, gt_mask_tensor
         train_data = self.process_data(train_data)
         if validation_series is not None:
             validation_data = TrainDataset(validation_series, missing_ratio_or_k=0.1,
@@ -147,7 +149,7 @@ class CSDIImputer:
         else:
             validation_data = None
         model.compile(optimizer=optimizer)
-        history = model.fit(x=train_data, batch_size=16, epochs=200, validation_data=(validation_data, ),
+        history = model.fit(x=train_data, batch_size=16, epochs=epochs, validation_data=(validation_data, ),
                                 callbacks=[tensorboard_callback,
                                          earlyStop_loss_callback,
                                          best_checkpoint_callback])
@@ -159,6 +161,8 @@ class CSDIImputer:
         plt.show()
 
     def process_data(self, train_data):
+        # observed_masks is the original missing, while gt_masks is the
+        # original missing pattern plus the generated masks
         observed_data, observed_mask, gt_mask = train_data
 
         observed_data = tf.transpose(observed_data, perm=[0, 2, 1])
@@ -190,17 +194,20 @@ class CSDIImputer:
 
     def get_hist_mask(self, observed_mask, for_pattern_mask=None):
         if for_pattern_mask is None:
-            for_pattern_mask = observed_mask
+            for_pattern_mask = observed_mask.numpy()
         if self.config["model"]["target_strategy"] == "mix":
             rand_mask = self.get_randmask(observed_mask)
-        # TODO tensor assignment
-        cond_mask = tf.identity(observed_mask)
+            rand_mask = rand_mask.numpy()
+
+        cond_mask = observed_mask.numpy() #tf.identity(observed_mask)
         for i in range(len(cond_mask)):
             mask_choice = np.random.rand()
             if self.config["model"]["target_strategy"] == "mix" and mask_choice > 0.5:
                 cond_mask[i] = rand_mask[i]
             else:
                 cond_mask[i] = cond_mask[i] * for_pattern_mask[i - 1]
+        cond_mask = tf.convert_to_tensor(cond_mask)
+        cond_mask = tf.cast(cond_mask, dtype=tf.float32)
         return cond_mask
 
     def load_weights(self, path_config_name= "/config_csdi_training.json"):
@@ -220,6 +227,7 @@ class CSDIImputer:
                mask,
                device,
                n_samples=100,
+               batch_size=32
                ):
 
         '''
@@ -241,16 +249,48 @@ class CSDIImputer:
             config = json.load(f)
 
         # prepare data set
-        test_data = ImputeDataset(sample, mask)  # observed_values_tensor, observed_masks_tensor, gt_mask_tensor
-        test_data = self.process_data(test_data) # observed_data, observed_mask, gt_mask, cond_mask
+        test_data = np.split(sample, int(sample.shape[0]/batch_size), 0)
+        test_masks = np.split(mask, int(sample.shape[0]/batch_size), 0)
+        mse_total = 0
+        mae_total = 0
+        evalpoints_total = 0
+
+        all_target = []
+        all_observed_point = []
+        all_observed_time = []
+        all_evalpoint = []
+        all_generated_samples = []
+
 
         model = tfCSDI(sample.shape[2], config, self.device)
 
         # model.load_state_dict(torch.load((self.path_load_model_dic)))
         model.load(self.path_load_model_dic)
 
-        imputations = model.impute(test_data, n_samples)
+        for test_batch, test_mask_batch in zip(test_data, test_masks):
+            test_batch = ImputeDataset(test_batch, test_mask_batch)  # observed_values_tensor, observed_masks_tensor, gt_mask_tensor
+            test_batch = self.process_data(test_batch)  # observed_data, observed_mask, gt_mask, cond_mask
+            samples, c_target, eval_points, observed_points, observed_time = model.impute(test_batch, n_samples)
+            samples = samples.permute(0, 1, 3, 2)  # (B,nsample,L,K)
+            c_target = c_target.permute(0, 2, 1)  # (B,L,K)
+            eval_points = eval_points.permute(0, 2, 1)
+            observed_points = observed_points.permute(0, 2, 1)
 
+            samples_median = samples.median(dim=1)
+            all_target.append(c_target)
+            all_evalpoint.append(eval_points)
+            all_observed_point.append(observed_points)
+            all_observed_time.append(observed_time)
+            all_generated_samples.append(samples)
+
+            mse_current = (((samples_median.values - c_target) * eval_points) ** 2)
+            mae_current = (tf.abs((samples_median.values - c_target) * eval_points))
+
+            mse_total += mse_current.sum().item()
+            mae_total += mae_current.sum().item()
+            evalpoints_total += eval_points.sum().item()
+
+        imputations = tf.concat(all_generated_samples)
         indx_imputation = tf.cast(~mask, tf.bool)
 
         original_sample_replaced = []

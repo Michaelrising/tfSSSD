@@ -205,7 +205,7 @@ class tfCSDI(keras.Model):
         B, K, L = observed_data.shape
         observed_tp = tf.reshape(tf.range(L), [1, L])  # 1 L
         observed_tp = tf.tile(observed_tp, [tf.shape(observed_data)[0], 1])  # B L
-
+        target_mask = observed_mask - cond_mask
         side_info = self.get_side_info(observed_tp, cond_mask)
         imputed_samples = []
 
@@ -243,18 +243,16 @@ class tfCSDI(keras.Model):
                     current_sample += sigma * noise
             imputed_samples.append(current_sample)  # .detach()
         imputed_samples = tf.stack(imputed_samples)
-        return imputed_samples
 
-    # @tf.function()
-    # def __call__(self):
-    #
+        return imputed_samples, observed_data, target_mask, observed_mask, observed_tp
+
 
     def compile(self, optimizer):
         super(tfCSDI, self).compile()
         self.optimizer = optimizer
         self.loss_fn = self.compute_loss
 
-    # @tf.function
+    @tf.function
     def train_step(self, batch):
         observed_data, observed_mask, _, cond_mask = batch[0]
         # observation mask denotes the original data missing, gt_masks is manmade mask
@@ -278,6 +276,7 @@ class tfCSDI(keras.Model):
         self.loss_tracker.update_state(loss)
         return {"loss": self.loss_tracker.result()}
 
+    @tf.function
     def test_step(self, batch):
         observed_data, observed_mask, gt_mask, _ = batch[0]
         # observation mask denotes the original data missing, gt_masks is manmade mask
@@ -287,7 +286,6 @@ class tfCSDI(keras.Model):
         observed_tp = tf.tile(observed_tp, [tf.shape(observed_data)[0], 1])  # B L
 
         side_info = self.get_side_info(observed_tp, cond_mask)
-        # loss = self.calc_loss_valid(observed_data, cond_mask, observed_mask, side_info, is_train=False)
         loss_sum = tf.zeros(1, dtype=tf.float32)
         c = lambda t, loss_sum: tf.less(t, self.num_steps)
         b = lambda t, loss_sum: (t+1, tf.add(loss_sum, self.loss_fn(observed_data, cond_mask, observed_mask, side_info, is_train=False, set_t=t)))
@@ -301,17 +299,4 @@ class tfCSDI(keras.Model):
         self.val_loss_tracker.update_state(val_loss)
         return {"loss": self.val_loss_tracker.result()}
 
-    # def evaluate(self, batch):
-    #     observed_data, observed_mask, gt_mask, _, \
-    #     cond_mask, time_emb, time_fea, alpha_tf, noise, diff_ebd = batch[0]
-    #     B, K, L = observed_data.shape
-    #     # with torch.no_grad():
-    #     cond_mask = gt_mask
-    #     target_mask = observed_mask - cond_mask
-    #     side_info = self.get_side_info(time_emb, cond_mask, time_fea)
-    #     samples = self.impute(observed_data, cond_mask, side_info, L)
-    #     for i in range(len(cut_length)):
-    #         target_mask[i, ..., 0: cut_length[i].item()] = 0
-    #
-    #     return samples, observed_data, target_mask, observed_mask, observed_tp
 
