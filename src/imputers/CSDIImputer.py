@@ -268,13 +268,12 @@ class CSDIImputer:
         path_load_model: load model weights
         path_config: load configuration file
         '''
-    @tf.function
     def imputer(self,
                device,
                sample=None,
                gt_mask=None,
                ob_masks=None,
-               n_samples=3,
+               n_samples=50,
                ):
 
         '''
@@ -288,9 +287,10 @@ class CSDIImputer:
         self.n_samples = tf.constant(n_samples, dtype=tf.int32)
 
         # prepare data set
-        test_data = tf.split(sample, int(sample.shape[0]/self.batch_size), 0)
-        test_gt_masks = tf.split(gt_mask, int(sample.shape[0]/self.batch_size), 0)
-        test_ob_masks = tf.split(ob_masks,  int(sample.shape[0]/self.batch_size), 0)
+        test_data = tf.stack(tf.split(sample, int(sample.shape[0]/self.batch_size), 0))
+        test_gt_masks = tf.stack(tf.split(gt_mask, int(sample.shape[0]/self.batch_size), 0))
+        test_ob_masks = tf.stack(tf.split(ob_masks,  int(sample.shape[0]/self.batch_size), 0))
+        B, K, L = test_data[0].shape
         mse_total = 0
         mae_total = 0
         evalpoints_total = 0
@@ -299,42 +299,68 @@ class CSDIImputer:
         # all_observed_point = tf.TensorArray(dtype=tf.float32, size=int(sample.shape[0]/self.batch_size))
         # all_observed_time = tf.TensorArray(dtype=tf.int32, size=int(sample.shape[0]/self.batch_size))
         # all_evalpoint = tf.TensorArray(dtype=tf.float32, size=int(sample.shape[0]/self.batch_size))
-        all_generated_samples = tf.TensorArray(dtype=tf.float32, size=int(sample.shape[0]/self.batch_size))
+        # all_generated_samples = tf.TensorArray(dtype=tf.float32, size=int(sample.shape[0]/self.batch_size))
 
-        all_start_time = time.time()
-        for i in range(int(sample.shape[0]/self.batch_size)):
-            test_batch = (test_data[i], test_ob_masks[i], test_gt_masks[i])
+        @tf.function
+        def single_batch_imputer(test_batch):
+            # test_batch = (test_d, test_ob_m, test_gt_m)
             # observed_data, observed_mask, gt_mask
-            ite_start_time = time.time()
-            samples, c_target, eval_points, observed_points, observed_time = self.model.impute(test_batch, self.n_samples)
+            samples, c_target, eval_points, observed_points, observed_time = self.model.impute(test_batch,
+                                                                                               self.n_samples)
             # samples: n_samples B K L
-            ite_end_time = time.time()
-            print('Ite-{} uses {} s'.format(i, int(ite_end_time - ite_start_time)))
             # samples = rearrange(samples, 'i j k l -> j i l k')  # (B,nsample,L,K)
             c_target = rearrange(c_target, 'i j k -> i k j')  # (B,L,K)
-            # c_target = c_target.permute(0, 2, 1)
             eval_points = rearrange(eval_points, 'i j k -> i k j')
-            # eval_points = eval_points.permute(0, 2, 1)
-            # observed_points = rearrange(observed_points, 'i j k -> i k j')
-            # observed_points = observed_points.permute(0, 2, 1)
 
-            samples_median = rearrange(tfp.stats.percentile(samples, 50., axis=0), 'i j k -> i k j') # B K L -> B L K
-            # all_target.write(i, c_target)
-            # all_evalpoint.write(i, eval_points)
-            # all_observed_point.write(i, observed_points)
-            # all_observed_time.write(i, observed_time)
-            all_generated_samples = all_generated_samples.write(i, samples)
+            samples_median = rearrange(tfp.stats.percentile(samples, 50., axis=0), 'i j k -> i k j')  # B K L -> B L K
 
             mse_current = (((samples_median - c_target) * eval_points) ** 2)
             mae_current = (tf.abs((samples_median - c_target) * eval_points))
 
-            mse_total += tf.reduce_sum(mse_current)
-            mae_total += tf.reduce_sum(mae_current)
-            evalpoints_total += tf.reduce_sum(eval_points)
-        all_end_time = time.time()
-        print("Total imputation uses time {} s".format(int(all_end_time - all_start_time)))
+            return samples, tf.reduce_sum(mse_current), tf.reduce_sum(mae_current), tf.reduce_sum(eval_points)
 
-        # indx_imputation = tf.cast(~gt_mask, tf.bool)
+        all_generated_samples, mse_total, mae_total, evalpoints_total = tf.function(tf.stop_gradient(
+                tf.map_fn(fn = single_batch_imputer, elems=(test_data, test_ob_masks, test_gt_masks),
+                            fn_output_signature=(tf.TensorSpec(shape=[n_samples,B, K, L], dtype=tf.float32),
+                                                tf.TensorSpec(shape=(), dtype=tf.float32),
+                                                tf.TensorSpec(shape=(), dtype=tf.float32),
+                                                tf.TensorSpec(shape=(), dtype=tf.float32)),
+                            parallel_iterations=5
+                      )
+        ))
 
-        return all_generated_samples.stack()
+        # all_start_time = time.time()
+        # for i in range(int(sample.shape[0]/self.batch_size)):
+        #     test_batch = (test_data[i], test_ob_masks[i], test_gt_masks[i])
+        #     # observed_data, observed_mask, gt_mask
+        #     ite_start_time = time.time()
+        #     samples, c_target, eval_points, observed_points, observed_time = self.model.impute(test_batch, self.n_samples)
+        #     # samples: n_samples B K L
+        #     ite_end_time = time.time()
+        #     print('Ite-{} uses {} s'.format(i, int(ite_end_time - ite_start_time)))
+        #     # samples = rearrange(samples, 'i j k l -> j i l k')  # (B,nsample,L,K)
+        #     c_target = rearrange(c_target, 'i j k -> i k j')  # (B,L,K)
+        #     # c_target = c_target.permute(0, 2, 1)
+        #     eval_points = rearrange(eval_points, 'i j k -> i k j')
+        #     # eval_points = eval_points.permute(0, 2, 1)
+        #     # observed_points = rearrange(observed_points, 'i j k -> i k j')
+        #     # observed_points = observed_points.permute(0, 2, 1)
+        #
+        #     samples_median = rearrange(tfp.stats.percentile(samples, 50., axis=0), 'i j k -> i k j') # B K L -> B L K
+        #     # all_target.write(i, c_target)
+        #     # all_evalpoint.write(i, eval_points)
+        #     # all_observed_point.write(i, observed_points)
+        #     # all_observed_time.write(i, observed_time)
+        #     all_generated_samples = all_generated_samples.write(i, samples)
+        #
+        #     mse_current = (((samples_median - c_target) * eval_points) ** 2)
+        #     mae_current = (tf.abs((samples_median - c_target) * eval_points))
+        #
+        #     mse_total += tf.reduce_sum(mse_current)
+        #     mae_total += tf.reduce_sum(mae_current)
+        #     evalpoints_total += tf.reduce_sum(eval_points)
+        # all_end_time = time.time()
+        # print("Total imputation uses time {} s".format(int(all_end_time - all_start_time)))
+
+        return all_generated_samples, mse_total, mae_total, evalpoints_total
 
