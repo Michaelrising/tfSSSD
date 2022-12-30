@@ -1,0 +1,56 @@
+from .imputers.CSDIImputer import *
+import os
+
+if __name__ == "__main__":
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    os.environ['TF_GPU_ALLOCATOR']='cuda_malloc_async'
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        try:
+            # Currently, memory growth needs to be the same across GPUs
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            logical_gpus = tf.config.list_logical_devices('GPU')
+            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+        except RuntimeError as e:
+            # Memory growth must be set before GPUs have been initialized
+            print(e)
+    device = '/gpu:0'
+    # current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+    model_path = '../results/mujoco/CSDI/'
+    model_path = model_path + os.listdir(model_path)[-1] + '/csdi_model'
+    log_path = '../log/mujoco/CSDI/'
+    log_path = log_path + os.listdir(log_path)[-1] + '/csdi_log'
+    config_path = './config'
+    # load data from training
+    observed_data, ob_mask, gt_mask = np.load(log_path + '/observed_data.npy'), np.load(log_path + '/ob_mask.npy'), np.load(log_path + '/gt_mask.npy')
+
+    CSDIImputer = CSDIImputer(device, model_path, log_path, config_path)
+
+    model_imputer = tfCSDI(observed_data.shape[1], CSDIImputer.config, CSDIImputer.device)
+
+    model_imputer.load_weights(CSDIImputer.model_path).expect_partial()
+    CSDIImputer.model = model_imputer
+
+    imputed_data = CSDIImputer.imputer(device=device, model=model_imputer, sample=observed_data, gt_mask=gt_mask, ob_masks=ob_mask)
+    # imputations = imputed_data.stack()  # int(sample.shape[0]/self.batch_size) * n_samples * B * K * L
+    imputations = rearrange(imputed_data, 'i j b k l -> i b j l k')
+    ob_data_numpy = observed_data
+    gt_mask_numpy = gt_mask
+    indx_imputation = ~gt_mask_numpy
+    imp_data_numpy = imputations.numpy()
+
+    original_sample_replaced = []
+    for original_sample, single_n_samples in zip(ob_data_numpy, imp_data_numpy):  # [x,x,x] -> [x,x] & [x,x,x,x] -> [x,x,x]
+        single_sample_replaced = []
+        for sample_generated in single_n_samples:  # [x,x] & [x,x,x] -> [x,x]
+            j = 0
+            sample_out = original_sample.copy()
+            sample_out[indx_imputation] = sample_generated[indx_imputation]
+            single_sample_replaced.append(sample_out)
+            j += 1
+        original_sample_replaced.append(single_sample_replaced)
+    original_sample_replaced = np.array(original_sample_replaced)
+    output = original_sample_replaced
+
+

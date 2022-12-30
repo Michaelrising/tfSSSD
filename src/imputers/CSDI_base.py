@@ -193,7 +193,7 @@ class DiffusionEmbedding(keras.Model):
         self.projection.add(keras.layers.Dense(projection_dim, activation=swish))
         self.projection.add(keras.layers.Dense(projection_dim, activation=swish))
 
-    def call(self, t):
+    def call(self, t, training=True):
         x = tf.gather(self.embedding, t)
         x = self.projection(x)
         return x
@@ -235,27 +235,26 @@ class diff_CSDI(keras.Model):
             )
 
     @tf.function
-    def __call__(self, x, cond_info, t):
+    def __call__(self, x, cond_info, t, training=True):
         B, inputdim, K, L = x.shape
-        x = rearrange(x, 'i j k l -> i j (k l)')
+        x = rearrange(x, '... k l -> ... (k l)')
         # x = tf.reshape(x, [B, inputdim, K * L])
         x = self.input_projection(x)
-        x = rearrange(x, 'i j (k l) -> i j k l', k=K)
-        # x = tf.reshape(x, [B, self.channels, K, L])
-        diffusion_emb = self.diffusion_embedding.call(t)
+        x = rearrange(x, '... (k l) -> ... k l', k=K)
+        diffusion_emb = self.diffusion_embedding.call(t, training=training)
 
-        skip = []
-        for layer in self.residual_layers:
-            x, skip_connection = layer.call(x, cond_info, diffusion_emb)
-            skip.append(skip_connection)
+        skip = tf.TensorArray(dtype=tf.float32, size=len(self.residual_layers))
+        for i, layer in enumerate(self.residual_layers):
+            x, skip_connection = layer.call(x, cond_info, diffusion_emb, training=training)
+            skip = skip.write(i, skip_connection)
 
-        x = tf.reduce_sum(tf.stack(skip), axis=0) / tf.math.sqrt(float(len(self.residual_layers)))
+        x = tf.reduce_sum(skip.stack(), axis=0) / tf.math.sqrt(float(len(self.residual_layers)))
         # x = tf.reshape(x, [B, self.channels, K * L])
-        x = rearrange(x, 'b c k l -> b c (k l)')
-        x = self.output_projection1(x)  # (B,channel,K*L)
-        x = self.output_projection2(x)  # (B,1,K*L)
+        x = rearrange(x, '... k l -> ... (k l)')
+        x = self.output_projection1(x)  # (... B,channel,K*L)
+        x = self.output_projection2(x)  # (... B,1,K*L)
         # x = tf.reshape(x, [B, K, L])
-        x = rearrange(tf.squeeze(x, 1), 'b (k l) -> b k l', k=K)
+        x = rearrange(tf.squeeze(x, 1), '... (k l) -> ... k l', k=K)
         return x
 
 
@@ -274,55 +273,56 @@ class ResidualBlock(keras.Model):
         self.feature_layer.add(keras.layers.Input((None, channels)))
         self.feature_layer.add(get_torch_trans(heads=nheads, layers=1, in_channels=channels, out_channels=channels))
 
-    def forward_time(self, y, base_shape):
+    def forward_time(self, y, base_shape, training=True):
         B, channel, K, L = base_shape
         if L == 1:
             return y
-        y = rearrange(y, 'b c (k l) -> b k c l', k=K) # b k c l
-        y = rearrange(y, 'b k c l -> l (b k) c') # in torch version, batch_first if False so it transposes input as L B C but we dont need to do here
-        y = self.time_layer(y) # (b k) l c
+        y = rearrange(y, '... c (k l) -> ... k c l', k=K) # (n_step)*b k c l
+        y = rearrange(y, ' b k c l -> l (b k) c') # in torch version, batch_first if False so it transposes input as L B C but we dont need to do here
+        y = self.time_layer(y) # ... (b k) l c
         y = tf.transpose(y, [1, 2, 0]) # (b k) c l
-        y = rearrange(y, '(b k) c l -> b c (k l)', k =K) # b c k l
+        y = rearrange(y, '(b k) c l -> b c (k l)', k=K) # b c k l
         # y = rearrange(y, 'b k c l -> b c k l')
         return y
 
-    def forward_feature(self, y, base_shape):
+    def forward_feature(self, y, base_shape, training=True):
         B, channel, K, L = base_shape
+
         if K == 1:
             return y
-        y = rearrange(y, 'b c (k l) -> (b l) c k', k=K) # (bl) c k
+        y = rearrange(y, 'b c (k l) ->  (b l) c k', k=K) # (bl) c k
         y = rearrange(y, '(b l) c k -> k (b l) c', l=L)
         y = self.feature_layer(y) # k (b l) c
-        y = rearrange(y, 'k (b l) c -> (b l) c k', l=L) # (b l) c k
-        y = rearrange(y, '(b l) c k -> b c k l', l=L) # b c k l
-        y = rearrange(y, 'b c k l -> b c (k l)', l=L)
+        y = rearrange(y, ' k (b l) c ->  (b l) c k', l=L) # (b l) c k
+        y = rearrange(y, ' (b l) c k -> b c k l', l=L) # b c k l
+        y = rearrange(y, ' b c k l -> b c (k l)', l=L)
         return y
 
-    def call(self, x, cond_info, diffusion_emb):
+    def call(self, x, cond_info, diffusion_emb, training=True):
         B, channel, K, L = x.shape
+        _, cond_dim, _, _ = cond_info.shape
         base_shape = x.shape
-        x = rearrange(x, 'b c k l -> b c (k l)')
-        # x = tf.reshape(x, [B, channel, K * L])
+        x = rearrange(x, '... k l -> ... (k l)')
 
         diffusion_emb = self.diffusion_projection(diffusion_emb)
-        diffusion_emb = tf.expand_dims(diffusion_emb, -1)  # (B,channel,1)
+        diffusion_emb = tf.expand_dims(diffusion_emb, -1)  # ((n_steps), B,channel,1)
         y = x + diffusion_emb
 
-        y = self.forward_time(y, base_shape)
-        y = self.forward_feature(y, base_shape)  # (B,channel,K*L)
-        y = self.mid_projection(y)  # (B,2*channel,K*L)
+        y = self.forward_time(y, base_shape, training=training)
+        y = self.forward_feature(y, base_shape, training=training)  # (... B,channel,K*L)
+        y = self.mid_projection(y)  # (... B,2*channel,K*L)
 
-        _, cond_dim, _, _ = cond_info.shape
-        cond_info = rearrange(cond_info, 'b c k l -> b c (k l)')
-        cond_info = self.cond_projection(cond_info)  # (B,2*channel,K*L)
+
+        cond_info = rearrange(cond_info, '... k l -> ... (k l)')
+        cond_info = self.cond_projection(cond_info)  # (... B, 2*channel,K*L)
         y = y + cond_info
 
         gate, filter = tf.split(y, 2, axis=1)
-        y = tf.math.sigmoid(gate) * tf.math.tanh(filter)  # (B,channel,K*L)
+        y = tf.math.sigmoid(gate) * tf.math.tanh(filter)  # (... B,channel,K*L)
         y = self.output_projection(y)
 
         residual, skip = tf.split(y, 2, axis=1)
-        x = rearrange(x, 'b c (k l) -> b c k l ', k=K)
-        residual = rearrange(residual, 'b c (k l) -> b c k l ', k=K)
-        skip = rearrange(skip, 'b c (k l) -> b c k l ', k=K)
+        x = rearrange(x, '... (k l) -> ... k l ', k=K)
+        residual = rearrange(residual, '... (k l) -> ... k l ', k=K)
+        skip = rearrange(skip, '... (k l) -> ... k l ', k=K)
         return (x + residual) / math.sqrt(2.0), skip

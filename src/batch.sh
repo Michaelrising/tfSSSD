@@ -1,0 +1,1 @@
+nohup python3 -u train-csdi.py > ../log/mujoco/CSDI/train_csdi.log  2>&1 &
