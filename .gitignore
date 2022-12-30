@@ -1,5 +1,5 @@
 ./datasets/Electricity/
-*_electricity.npy
+*.npy
 *.log
 *.pb
 ./results

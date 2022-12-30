@@ -325,7 +325,7 @@ class CSDIImputer:
                                                 tf.TensorSpec(shape=(), dtype=tf.float32),
                                                 tf.TensorSpec(shape=(), dtype=tf.float32),
                                                 tf.TensorSpec(shape=(), dtype=tf.float32)),
-                            parallel_iterations=5
+                            parallel_iterations=10
                       )
         ))
 
