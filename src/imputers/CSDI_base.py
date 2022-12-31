@@ -5,6 +5,7 @@ from tensorflow import keras
 import math
 from einops import rearrange
 from .Encoder_keras import Encoder
+from .S4Model import S4Layer
 
 
 def quantile_loss(target, forecast, q: tf.float32, eval_points) -> tf.float32:
@@ -231,6 +232,7 @@ class diff_CSDI(keras.Model):
                     channels=self.channels,
                     diffusion_embedding_dim=config["diffusion_embedding_dim"],
                     nheads=config["nheads"],
+                    time_layer=config['time_layer']
                 )
             )
 
@@ -259,16 +261,21 @@ class diff_CSDI(keras.Model):
 
 
 class ResidualBlock(keras.Model):
-    def __init__(self, side_dim, channels, diffusion_embedding_dim, nheads):
+    def __init__(self, side_dim, channels, diffusion_embedding_dim, nheads, time_layer='transformer'):
         super().__init__()
+        self.time_layer_type=time_layer
         self.diffusion_projection = keras.layers.Dense(channels)
         self.cond_projection = Conv1d_with_init(side_dim, 2 * channels, 1)
         self.mid_projection = Conv1d_with_init(channels, 2 * channels, 1)
         self.output_projection = Conv1d_with_init(channels, 2 * channels, 1)
 
         self.time_layer = keras.Sequential()
-        self.time_layer.add(keras.layers.Input((None, channels)))
-        self.time_layer.add(get_torch_trans(heads=nheads, layers=1, in_channels=channels, out_channels=channels))
+        if time_layer=='transformer':
+            self.time_layer.add(keras.layers.Input((None, channels)))
+            self.time_layer.add(get_torch_trans(heads=nheads, layers=1, in_channels=channels, out_channels=channels))
+        else:
+            # self.time_layer.add(keras.layers.Input((channels, None)))
+            self.time_layer.add(S4Layer(features=channels, lmax=100))
         self.feature_layer = keras.Sequential()
         self.feature_layer.add(keras.layers.Input((None, channels)))
         self.feature_layer.add(get_torch_trans(heads=nheads, layers=1, in_channels=channels, out_channels=channels))
@@ -277,12 +284,17 @@ class ResidualBlock(keras.Model):
         B, channel, K, L = base_shape
         if L == 1:
             return y
-        y = rearrange(y, '... c (k l) -> ... k c l', k=K) # (n_step)*b k c l
-        y = rearrange(y, ' b k c l -> l (b k) c') # in torch version, batch_first if False so it transposes input as L B C but we dont need to do here
-        y = self.time_layer(y) # ... (b k) l c
-        y = tf.transpose(y, [1, 2, 0]) # (b k) c l
-        y = rearrange(y, '(b k) c l -> b c (k l)', k=K) # b c k l
-        # y = rearrange(y, 'b k c l -> b c k l')
+        y = rearrange(y, '... c (k l) -> ... k c l', k=K) # b k c l
+        if self.time_layer_type=='transformer':
+            y = rearrange(y, ' b k c l -> l (b k) c') # in torch version, batch_first is False so it transposes input as L B C but we dont need to do here
+            y = self.time_layer(y)
+            y = tf.transpose(y, [1, 2, 0])
+            y = rearrange(y, '(b k) c l -> b c (k l)', k=K)  # b c k l
+        else:
+            y = rearrange(y, ' b k c l -> (b k) c l')
+            y = self.time_layer(y)  # bk, c, l -> bk, l, c
+            y = rearrange(y, '(b k) l c -> b c (k l)', k=K)  # b c k l
+
         return y
 
     def forward_feature(self, y, base_shape, training=True):

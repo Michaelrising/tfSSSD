@@ -51,15 +51,14 @@ def print_size(net):
 
 # Utilities for diffusion models
 
-def std_normal(size, device):
+def std_normal(size):
     """
     Generate the standard Gaussian variable of a certain size
     """
-    with tf.device(device):
-        return tf.random.normal(size)
+    return tf.random.normal(size)
 
 
-def calc_diffusion_step_embedding(diffusion_steps, diffusion_step_embed_dim_in, device):
+def calc_diffusion_step_embedding(diffusion_steps, diffusion_step_embed_dim_in):
     """
     Embed a diffusion step $t$ into a higher dimensional space
     E.g. the embedding vector in the 128-dimensional space is
@@ -79,15 +78,14 @@ def calc_diffusion_step_embedding(diffusion_steps, diffusion_step_embed_dim_in, 
 
     half_dim = diffusion_step_embed_dim_in // 2
     _embed = np.log(10000) / (half_dim - 1)
-    with tf.device(device):
-        _embed = tf.exp(tf.range(half_dim, dtype=tf.float32) * tf.constant(-_embed, dtype=tf.float32))
-        _embed = tf.cast(diffusion_steps, _embed.dtype)* _embed
+    _embed = tf.exp(tf.range(half_dim, dtype=tf.float32) * tf.constant(-_embed, dtype=tf.float32))
+    _embed = tf.cast(diffusion_steps, _embed.dtype)* _embed
     diffusion_step_embed = tf.concat((tf.math.sin(_embed),tf.math.cos(_embed)), 1)
 
     return diffusion_step_embed
 
 
-def calc_diffusion_hyperparams(T, beta_0, beta_T, device):
+def calc_diffusion_hyperparams(T, beta_0, beta_T):
     """
     Compute diffusion process hyperparameters
 
@@ -111,12 +109,11 @@ def calc_diffusion_hyperparams(T, beta_0, beta_T, device):
         Beta_tilde[t] *= (1 - Alpha_bar[t - 1]) / (
                 1 - Alpha_bar[t])  # \tilde{\beta}_t = \beta_t * (1-\bar{\alpha}_{t-1})
         # / (1-\bar{\alpha}_t)
-    with tf.device(device):
-        Beta = tf.convert_to_tensor(Beta)
-        Alpha = tf.convert_to_tensor(Alpha)
-        Alpha_bar = tf.convert_to_tensor(Alpha_bar)
-        Beta_tilde = tf.convert_to_tensor(Beta_tilde)
-        Sigma = tf.math.sqrt(Beta_tilde)  # \sigma_t^2  = \tilde{\beta}_t
+    Beta = tf.convert_to_tensor(Beta)
+    Alpha = tf.convert_to_tensor(Alpha)
+    Alpha_bar = tf.convert_to_tensor(Alpha_bar)
+    Beta_tilde = tf.convert_to_tensor(Beta_tilde)
+    Sigma = tf.math.sqrt(Beta_tilde)  # \sigma_t^2  = \tilde{\beta}_t
 
     _dh = {}
     _dh["T"], _dh["Beta"], _dh["Alpha"], _dh["Alpha_bar"], _dh["Sigma"] = T, Beta, Alpha, Alpha_bar, Sigma
@@ -138,7 +135,6 @@ def sampling(net, size, diffusion_hyperparams, cond, mask, only_generate_missing
     Returns:
     the generated audio(s) in torch.tensor, shape=size
     """
-    device = net.device
     _dh = diffusion_hyperparams
     T, Alpha, Alpha_bar, Sigma = _dh["T"], _dh["Alpha"], _dh["Alpha_bar"], _dh["Sigma"]
     assert len(Alpha) == T
@@ -148,19 +144,18 @@ def sampling(net, size, diffusion_hyperparams, cond, mask, only_generate_missing
 
     print('begin sampling, total number of reverse steps = %s' % T)
 
-    x = std_normal(size, device)
+    x = std_normal(size)
 
     # with torch.no_grad():
-    with tf.device(device):
-        for t in range(T - 1, -1, -1):
-            if only_generate_missing == 1:
-                x = x * (1.0 - tf.constant(mask, dtype=tf.float32)) + cond * tf.constant(mask, dtype=tf.float32)
-            diffusion_steps = (t * tf.ones((size[0], 1))) #.to(device)  # use the corresponding reverse step
-            epsilon_theta = net((x, cond, mask, diffusion_steps,))  # predict \epsilon according to \epsilon_\theta
-            # update x_{t-1} to \mu_\theta(x_t)
-            x = (x - (1 - Alpha[t]) / tf.math.sqrt(1 - Alpha_bar[t]) * epsilon_theta) / tf.math.sqrt(Alpha[t])
-            if t > 0:
-                x = x + Sigma[t] * std_normal(size, device)  # add the variance term to x_{t-1}
+    for t in range(T - 1, -1, -1):
+        if only_generate_missing == 1:
+            x = x * (1.0 - tf.constant(mask, dtype=tf.float32)) + cond * tf.constant(mask, dtype=tf.float32)
+        diffusion_steps = (t * tf.ones((size[0], 1)))  # use the corresponding reverse step
+        epsilon_theta = net((x, cond, mask, diffusion_steps,))  # predict \epsilon according to \epsilon_\theta
+        # update x_{t-1} to \mu_\theta(x_t)
+        x = (x - (1 - Alpha[t]) / tf.math.sqrt(1 - Alpha_bar[t]) * epsilon_theta) / tf.math.sqrt(Alpha[t])
+        if t > 0:
+            x = x + Sigma[t] * std_normal(size)  # add the variance term to x_{t-1}
 
     return x
 
@@ -180,7 +175,6 @@ def training_loss(net, loss_fn, X, diffusion_hyperparams, only_generate_missing=
     training loss
     """
     # net = tf.function(net)
-    device = net.device
     _dh = diffusion_hyperparams
     T, Alpha_bar = _dh["T"], _dh["Alpha_bar"]
 
@@ -190,10 +184,10 @@ def training_loss(net, loss_fn, X, diffusion_hyperparams, only_generate_missing=
     loss_mask = X[3]
 
     B, C, L = audio.shape  # B is batchsize, C is the dimension of each audio, L is audio length
-    with tf.device(device):
-        diffusion_steps = tf.random.uniform(shape=(B,), maxval=T, dtype=tf.int32) # randomly sample diffusion steps from 1~T
 
-    z = std_normal(audio.shape, device)
+    diffusion_steps = tf.random.uniform(shape=(B,), maxval=T, dtype=tf.int32) # randomly sample diffusion steps from 1~T
+
+    z = std_normal(audio.shape)
     if only_generate_missing == 1:
         z = audio * mask + z * (1. - mask)
     transformed_X = tf.cast(tf.math.sqrt(tf.reshape(tf.gather(Alpha_bar,diffusion_steps), shape=[B, 1, 1])), dtype=audio.dtype)* audio + tf.cast(tf.math.sqrt(

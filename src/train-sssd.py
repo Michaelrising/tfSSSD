@@ -29,7 +29,7 @@ def train(output_directory,
           masking,
           missing_k,
           missing_rate,
-          device):
+          ):
     """
     Train Diffusion Models
 
@@ -62,21 +62,16 @@ def train(output_directory,
         os.chmod(output_directory, 0o775)
     print("output directory", output_directory, flush=True)
 
-    # map diffusion hyperparameters to gpu
-    # for key in diffusion_hyperparams:
-    #     if key != "T":
-    #         diffusion_hyperparams[key] = diffusion_hyperparams[key].to(device)
-    # predefine model
-    with tf.device(device):
-        if use_model == 0:
-            net = DiffWaveImputer(**model_config)  # .to(device)
-        elif use_model == 1:
-            net = SSSDSAImputer(**model_config)  # .to(device)
-        elif use_model == 2:
-            net = SSSDS4Imputer(**model_config)  # .to(device)
-        else:
-            print('Model chosen not available.')
-            net = None
+
+    if use_model == 0:
+        net = DiffWaveImputer(**model_config)
+    elif use_model == 1:
+        net = SSSDSAImputer(**model_config)
+    elif use_model == 2:
+        net = SSSDS4Imputer(**model_config)
+    else:
+        print('Model chosen not available.')
+        net = None
     # print_size(net.summary())
 
 
@@ -111,8 +106,8 @@ def train(output_directory,
 
     # prepare X and Y for model.fit()
     training_data = np.load(trainset_config['train_data_path'])
-    with tf.device(device):
-        training_data = tf.convert_to_tensor(training_data, dtype=tf.float32)
+
+    training_data = tf.convert_to_tensor(training_data, dtype=tf.float32)
     print('Data loaded')
     B, C, L = training_data.shape  # B is batchsize, C is the dimension of each audio, L is audio length
 
@@ -133,7 +128,7 @@ def train(output_directory,
         transposed_mask = get_mask_bm(training_data, missing_k)
 
     mask = tf.transpose(tf.convert_to_tensor(mask, dtype=tf.float32), perm=[1, 0])
-    mask = tf.tile(tf.expand_dims(mask, 0), [B, 1, 1])  # .float().to(device)
+    mask = tf.tile(tf.expand_dims(mask, 0), [B, 1, 1])
     loss_mask = tf.logical_not(tf.cast(mask, dtype=tf.bool))  # .bool()
     training_data = tf.transpose(training_data, perm=[0, 2, 1])  # batch dim = [B, C, L]
 
@@ -143,11 +138,9 @@ def train(output_directory,
     _dh = diffusion_hyperparams
     T, Alpha_bar = _dh["T"], tf.cast(_dh["Alpha_bar"], tf.float32)
 
-    with tf.device(device):
-        diffusion_steps = tf.random.uniform(shape=(B,), maxval=T,
-                                            dtype=tf.int32)  # randomly sample diffusion steps from 1~T
+    diffusion_steps = tf.random.uniform(shape=(B,), maxval=T, dtype=tf.int32)  # randomly sample diffusion steps from 1~T
 
-    z = std_normal(training_data.shape, device)
+    z = std_normal(training_data.shape)
     if only_generate_missing == 1:
         z = training_data * mask + z * (1. - mask)
     transformed_X = tf.cast(tf.math.sqrt(tf.reshape(tf.gather(Alpha_bar, diffusion_steps), shape=[B, 1, 1])),
@@ -183,7 +176,7 @@ def train(output_directory,
         x=X,
         y=z,
         batch_size=64,
-        epochs=1000,
+        epochs=50,
         callbacks=[tensorboard_callback,
                    earlyStop_loss_callback,
                    earlyStop_accu_call_back,
@@ -192,6 +185,19 @@ def train(output_directory,
 
 
 if __name__ == "__main__":
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ['TF_GPU_ALLOCATOR'] = 'cuda_malloc_async'
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        try:
+            # Currently, memory growth needs to be the same across GPUs
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            logical_gpus = tf.config.list_logical_devices('GPU')
+            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+        except RuntimeError as e:
+            # Memory growth must be set before GPUs have been initialized
+            print(e)
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', type=str, default='/config/config_SSSDS4.json',
                         help='JSON file for configuration')

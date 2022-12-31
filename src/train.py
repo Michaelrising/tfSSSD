@@ -27,8 +27,7 @@ def train(output_directory,
           only_generate_missing,
           masking,
           missing_k,
-          missing_rate,
-          device):
+          missing_rate):
     
     """
     Train Diffusion Models
@@ -67,16 +66,15 @@ def train(output_directory,
     #     if key != "T":
     #         diffusion_hyperparams[key] = diffusion_hyperparams[key].to(device)
     # predefine model
-    with tf.device(device):
-        if use_model == 0:
-            net = DiffWaveImputer(**model_config) #.to(device)
-        elif use_model == 1:
-            net = SSSDSAImputer(**model_config)#.to(device)
-        elif use_model == 2:
-            net = SSSDS4Imputer(**model_config) #.to(device)
-        else:
-            print('Model chosen not available.')
-            net=None
+    if use_model == 0:
+        net = DiffWaveImputer(**model_config) #.to(device)
+    elif use_model == 1:
+        net = SSSDSAImputer(**model_config)#.to(device)
+    elif use_model == 2:
+        net = SSSDS4Imputer(**model_config) #.to(device)
+    else:
+        print('Model chosen not available.')
+        net=None
     # print_size(net.summary())
 
     # define optimizer
@@ -121,8 +119,7 @@ def train(output_directory,
     training_data = np.load(trainset_config['train_data_path'])
     training_data = np.split(training_data, 160, 0)
     training_data = np.array(training_data)
-    with tf.device(device):
-        training_data = tf.convert_to_tensor(training_data, dtype=tf.float32)
+    training_data = tf.convert_to_tensor(training_data, dtype=tf.float32)
     print('Data loaded')
 
     
@@ -180,8 +177,21 @@ def train(output_directory,
 
 
 if __name__ == "__main__":
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    gpus = tf.config.list_physical_devices('GPU')
+
+    if gpus:
+        try:
+            # Currently, memory growth needs to be the same across GPUs
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            logical_gpus = tf.config.list_logical_devices('GPU')
+            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+        except RuntimeError as e:
+            # Memory growth must be set before GPUs have been initialized
+            print(e)
     parser = argparse.ArgumentParser()
-    parser.add_argument('-c', '--config', type=str, default='/config/config_DiffWave.json',
+    parser.add_argument('-c', '--config', type=str, default='/config/config_SSSDS4.json',
                         help='JSON file for configuration')
 
     args = parser.parse_args()
@@ -212,15 +222,4 @@ if __name__ == "__main__":
     elif train_config['use_model'] == 2:
         model_config = config['wavenet_config']
 
-    gpus = tf.config.list_physical_devices('GPU')
-    if gpus:
-        try:
-            # Currently, memory growth needs to be the same across GPUs
-            for gpu in gpus:
-                tf.config.experimental.set_memory_growth(gpu, True)
-            logical_gpus = tf.config.list_logical_devices('GPU')
-            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-        except RuntimeError as e:
-            # Memory growth must be set before GPUs have been initialized
-            print(e)
     train(**train_config)

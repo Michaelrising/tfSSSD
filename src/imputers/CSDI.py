@@ -6,11 +6,10 @@ from .CSDI_base import *
 ''' Standalone CSDI imputer. The imputer class is located in the last part of the notebook, please see more documentation there'''
 
 class tfCSDI(keras.Model):
-    def __init__(self, target_dim, config, device):
+    def __init__(self, target_dim, config):
         super(tfCSDI, self).__init__()
         self.loss_fn = None
         self.optimizer = None
-        self.device = device
         self.target_dim = target_dim
 
         self.emb_time_dim = config["model"]["timeemb"]
@@ -291,7 +290,7 @@ class tfCSDI(keras.Model):
         self.loss_tracker.update_state(loss)
         return {"loss": self.loss_tracker.result()}
 
-    # @tf.function
+    @tf.function
     def test_step(self, batch):
         observed_data, observed_mask, gt_mask, _ = batch[0]
         # observation mask denotes the original data missing, gt_masks is man-made mask

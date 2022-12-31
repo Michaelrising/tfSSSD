@@ -1,17 +1,7 @@
 import numpy as np
-import random
 import tensorflow as tf
 from tensorflow import keras
-from tqdm import tqdm
-import pickle
 import math
-import argparse
-import datetime
-import json
-import yaml
-import os
-import wandb
-import logging
 from functools import partial
 from scipy import special as ss
 from einops import rearrange, repeat
@@ -188,8 +178,7 @@ def power(L, A, v=None):
     """
 
     # I = torch.eye(A.shape[-1]).to(A)
-    with tf.device(A.device):
-        I = tf.eye(A.shape[-1], dtype=A.dtype) # , dtype=A.dtype, device=A.device)
+    I = tf.eye(A.shape[-1], dtype=A.dtype)
 
     powers = [A]
     l = 1
@@ -382,8 +371,7 @@ def bilinear(dt, A, B=None):
     B: (... N)
     """
     N = A.shape[-1]
-    with tf.device(A.device):
-        I = tf.eye(N, dtype=A.dtype)
+    I = tf.eye(N, dtype=A.dtype)
     A_backwards = I - dt[:, None, None] / 2 * A
     A_forwards = I + dt[:, None, None] / 2 * A
 
@@ -438,17 +426,15 @@ class SSKernelNPLR(keras.Model):
 
         if double_length:
             self.L *= 2
-            self._omega(self.L, dtype=C.dtype, device=C.device, cache=True)
+            self._omega(self.L, dtype=C.dtype, cache=True)
 
-    def _omega(self, L, dtype, device, cache=True):
+    def _omega(self, L, dtype, cache=True):
         """ Calculate (and cache) FFT nodes and their "unprocessed" them with the bilinear transform
         This should be called everytime the internal length self.L changes """
         omega = np.exp(-2j * np.pi / (L))
         omega = omega ** np.arange(0, L // 2 + 1)
-        with tf.device(device):
-            omega = tf.constant(omega, dtype=dtype)  # \omega_{2L}
-            # omega = omega ** tf.range(0, L // 2 + 1)
-            z = 2 * (1 - omega) / (1 + omega)
+        omega = tf.constant(omega, dtype=dtype)  # \omega_{2L}
+        z = 2 * (1 - omega) / (1 + omega)
         # TODO buffer in tensorflow
         if cache:
             setattr(self, 'omega', tf.Variable(_c2r(omega), name='omega', trainable=False))
@@ -459,7 +445,7 @@ class SSKernelNPLR(keras.Model):
 
     def __init__(
         self,
-        L, w, P, B, C, log_dt,device,
+        L, w, P, B, C, log_dt,
         hurwitz=False,
         trainable=None,
         lr=None,
@@ -488,7 +474,6 @@ class SSKernelNPLR(keras.Model):
         """
 
         super().__init__()
-        self.device = device
         self.hurwitz = hurwitz
         self.tie_state = tie_state
         self.verbose = verbose
@@ -511,7 +496,7 @@ class SSKernelNPLR(keras.Model):
         # Cache Fourier nodes every time we set up a desired length
         self.L = L
         if self.L is not None:
-            self._omega(self.L, dtype=C.dtype, device=C.device, cache=True)
+            self._omega(self.L, dtype=C.dtype, cache=True)
 
         # Register parameters
         # C is a regular parameter, not state
@@ -581,7 +566,7 @@ class SSKernelNPLR(keras.Model):
             # Use cached FFT nodes
             omega, z = _r2c(self.omega), _r2c(self.z)  # (..., L)
         else:
-            omega, z = self._omega(int(self.L/rate), dtype=w.dtype, device=w.device, cache=False)
+            omega, z = self._omega(int(self.L/rate), dtype=w.dtype, cache=False)
 
         if self.tie_state:
             B = repeat(B, '... 1 n -> ... h n', h=self.H)
@@ -725,11 +710,10 @@ class SSKernelNPLR(keras.Model):
         """
         C = _r2c(self.C) # View used for dtype/device
 
-        with tf.device(C.device):
-            if u is None: # Special case used to find dA
-                u = tf.zeros(self.H, dtype=C.dtype)
-            if state is None: # Special case used to find dB
-                state = tf.zeros([self.H, self.N], dtype=C.dtype)
+        if u is None: # Special case used to find dA
+            u = tf.zeros(self.H, dtype=C.dtype)
+        if state is None: # Special case used to find dB
+            state = tf.zeros([self.H, self.N], dtype=C.dtype)
 
         step_params = self.step_params.copy()
         if state.shape[-1] == self.N: # Only store half of the conjugate pairs; should be true by default
@@ -772,14 +756,12 @@ class SSKernelNPLR(keras.Model):
         self._setup_linear()
         C = _r2c(self.C) # Just returns a view that we use for finding dtype/device
 
-        with tf.device(C.device):
-            state = tf.expand_dims(tf.eye(2*self.N, dtype=C.dtype), -2) # (N 1 N)
+        state = tf.expand_dims(tf.eye(2*self.N, dtype=C.dtype), -2) # (N 1 N)
         dA = self._step_state_linear(state=state)
         dA = rearrange(dA, "n h m -> h m n")
         self.dA = dA # (H N N)
 
-        with tf.device(C.device):
-            u = tf.ones(self.H, dtype=C.dtype)
+        u = tf.ones(self.H, dtype=C.dtype)
         dB = self._step_state_linear(u=u)
         dB = _conj(dB)
         self.dB = rearrange(dB, '1 h n -> h n') # (H N)
@@ -796,8 +778,7 @@ class SSKernelNPLR(keras.Model):
 
         # Calculate original C
         dA_L = power(self.L, self.dA)
-        with tf.device(dA_L.device):
-            I = tf.eye(self.dA.size(-1), dtype=dA_L.dtype)
+        I = tf.eye(self.dA.size(-1), dtype=dA_L.dtype)
         C = _conj(_r2c(self.C)) # (H C N)
 
         dC = tf.linalg.solve(
@@ -869,8 +850,7 @@ class SSKernelNPLR(keras.Model):
             (C.shape[0], H, N), # self.dC.shape
             batch_shape + (H, N),
         )
-        with tf.device(C.device):
-            state = tf.zeros(*batch_shape, H, N, dtype=C.dtype)
+        state = tf.zeros(*batch_shape, H, N, dtype=C.dtype)
         return state
 
     def step(self, u, state):
@@ -908,7 +888,6 @@ class HippoSSKernel(keras.Model):
     def __init__(
             self,
             H,
-            device,
             N=64,
             L=1,
             measure="legs",
@@ -928,7 +907,6 @@ class HippoSSKernel(keras.Model):
             verbose=False,
     ):
         super().__init__()
-        self.device = device
         self.N = N
         self.H = H
         L = L or 1
@@ -949,7 +927,6 @@ class HippoSSKernel(keras.Model):
         self.kernel = SSKernelNPLR(
             L, w, p, B, C,
             log_dt,
-            device=device,
             hurwitz=hurwitz,
             trainable=trainable,
             lr=lr,
@@ -989,7 +966,6 @@ class S4(keras.Model):
     def __init__(
             self,
             d_model,
-            device,
             d_state=64,
             l_max=1,
             # Maximum length of sequence. Fine if not provided: the kernel will keep doubling in length until longer than sequence. However, this can be marginally slower if the true length is not a power of 2
@@ -1026,7 +1002,6 @@ class S4(keras.Model):
         #     import src.utils.train
         #     log = src.utils.train.get_logger(__name__)
         #     log.info(f"Constructing S4 (H, N, L) = ({d_model}, {d_state}, {l_max})")
-        self.device = device
         self.h = d_model
         self.n = d_state
         self.bidirectional = bidirectional
@@ -1046,7 +1021,7 @@ class S4(keras.Model):
             channels *= 2
 
         # SSM Kernel
-        self.kernel = HippoSSKernel(self.h, N=self.n, L=l_max, channels=channels, device=device, verbose=verbose,
+        self.kernel = HippoSSKernel(self.h, N=self.n, L=l_max, channels=channels, verbose=verbose,
                                     **kernel_args)
 
         # Pointwise
@@ -1064,8 +1039,6 @@ class S4(keras.Model):
             activate=True,
             weight_norm=weight_norm,
         )
-
-        # self.time_transformer = get_torch_trans(heads=8, layers=1, channels=self.h)
 
     def call(self, u, **kwargs):  # absorbs return_output and transformer src mask
         """
@@ -1110,9 +1083,6 @@ class S4(keras.Model):
 
         y = self.output_linear(y)
 
-        # ysize = b, k, l, requieres l, b, k
-        # y = self.time_transformer(y.permute(2,0,1)).permute(1,2,0)
-
         return y, None
 
     def step(self, u, state):
@@ -1135,7 +1105,7 @@ class S4(keras.Model):
             y = self.output_linear(y)
         return y, next_state
 
-    def default_state(self, *batch_shape, device=None):
+    def default_state(self, *batch_shape):
         return self.kernel.default_state(*batch_shape)
 
     @property
@@ -1153,14 +1123,12 @@ class S4(keras.Model):
 
 class S4Layer(keras.Model):
     # S4 Layer that can be used as a drop-in replacement for a TransformerEncoder
-    def __init__(self, features, lmax, device, N=64, dropout=0.0, bidirectional=True, layer_norm=True):
+    def __init__(self, features, lmax, N=64, dropout=0.0, bidirectional=True, layer_norm=True):
         super().__init__()
-        self.device = device
         self.s4_layer = S4(d_model=features,
                            d_state=N,
                            l_max=lmax,
-                           bidirectional=bidirectional,
-                           device=device)
+                           bidirectional=bidirectional)
 
         self.norm_layer = keras.layers.LayerNormalization(axis=-1) if layer_norm else tf.identity
         self.dropout = keras.layers.SpatialDropout1D(dropout) if dropout > 0 else tf.identity

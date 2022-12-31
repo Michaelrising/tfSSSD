@@ -2,7 +2,7 @@ from imputers.CSDIImputer import *
 import pandas as pd
 
 if __name__ == "__main__":
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
     os.environ['TF_GPU_ALLOCATOR']='cuda_malloc_async'
     gpus = tf.config.list_physical_devices('GPU')
     if gpus:
@@ -15,10 +15,9 @@ if __name__ == "__main__":
         except RuntimeError as e:
             # Memory growth must be set before GPUs have been initialized
             print(e)
-    device = '/gpu:0'
     current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-    model_path = '../results/mujoco/CSDI/' + current_time + '/csdi_model'
-    log_path = '../log/mujoco/CSDI/' + current_time + '/csdi_log'
+    model_path = '../results/mujoco/CSDI-S4/' + current_time + '/csdi_model'
+    log_path = '../log/mujoco/CSDI-S4/' + current_time + '/csdi_log'
     config_path = './config'
     if not os.path.exists(model_path):
         os.makedirs(model_path)
@@ -34,7 +33,7 @@ if __name__ == "__main__":
     validation_data = tf.convert_to_tensor(all_data[6400:7680])
     predicton_data = tf.convert_to_tensor(all_data[7680:])
     print('Data loaded')
-    CSDIImputer = CSDIImputer(device, model_path, log_path, config_path, epochs=50)
+    CSDIImputer = CSDIImputer(model_path, log_path, config_path, epochs=50, time_layer='S4')
     train_data, validation_data = CSDIImputer.train(training_data, validation_data)
     # test_data = tf.convert_to_tensor(training_data[7000:])
     observed_data, ob_mask, gt_mask, _ = train_data

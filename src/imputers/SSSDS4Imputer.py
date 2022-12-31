@@ -5,7 +5,6 @@ from tensorflow import keras
 from utils.util import calc_diffusion_step_embedding
 from imputers.S4Model import S4Layer
 
-
 def swish(x):
     return x * keras.activations.sigmoid(x)
 
@@ -53,9 +52,8 @@ class Residual_block(keras.Model):
                  s4_dropout,
                  s4_bidirectional,
                  s4_layernorm,
-                 device):
+                 ):
         super(Residual_block, self).__init__()
-        self.device = device
         self.res_channels = res_channels
 
         # self.fc_t = nn.Linear(diffusion_step_embed_dim_out, self.res_channels)
@@ -67,7 +65,7 @@ class Residual_block(keras.Model):
                            dropout=s4_dropout,
                            bidirectional=s4_bidirectional,
                            layer_norm=s4_layernorm,
-                           device=device)
+                           )
 
         self.conv_layer = Conv(self.res_channels, 2 * self.res_channels, kernel_size=3)
 
@@ -77,7 +75,7 @@ class Residual_block(keras.Model):
                            dropout=s4_dropout,
                            bidirectional=s4_bidirectional,
                            layer_norm=s4_layernorm,
-                           device=device)
+                           )
 
         self.cond_conv = Conv(2 * in_channels, 2 * self.res_channels, kernel_size=1)
 
@@ -133,9 +131,9 @@ class Residual_group(keras.Model):
                  s4_dropout,
                  s4_bidirectional,
                  s4_layernorm,
-                 device):
+                 ):
         super(Residual_group, self).__init__()
-        self.device = device
+
         self.num_res_layers = num_res_layers
         self.diffusion_step_embed_dim_in = diffusion_step_embed_dim_in
 
@@ -155,13 +153,12 @@ class Residual_group(keras.Model):
                                                        s4_dropout=s4_dropout,
                                                        s4_bidirectional=s4_bidirectional,
                                                        s4_layernorm=s4_layernorm,
-                                                       device=device))
+                                                       ))
 
     def call(self, input_data):
         noise, conditional, diffusion_steps = input_data
 
-        diffusion_step_embed = calc_diffusion_step_embedding(diffusion_steps, self.diffusion_step_embed_dim_in,
-                                                             self.device)
+        diffusion_step_embed = calc_diffusion_step_embedding(diffusion_steps, self.diffusion_step_embed_dim_in)
         # diffusion_step_embed = tf.transpose(diffusion_step_embed, perm= [1, 0]) # change dimension seq and feature, feature to last
         diffusion_step_embed = self.fc_model(diffusion_step_embed)
 
@@ -186,10 +183,8 @@ class SSSDS4Imputer(keras.Model):
                  s4_d_state,
                  s4_dropout,
                  s4_bidirectional,
-                 s4_layernorm,
-                 device):
+                 s4_layernorm):
         super(SSSDS4Imputer, self).__init__()
-        self.device = device
 
         self.init_conv = keras.Sequential()  # initial process for input
         self.init_conv.add(keras.layers.Input(shape=(in_channels, None,)))
@@ -207,8 +202,7 @@ class SSSDS4Imputer(keras.Model):
                                              s4_d_state=s4_d_state,
                                              s4_dropout=s4_dropout,
                                              s4_bidirectional=s4_bidirectional,
-                                             s4_layernorm=s4_layernorm,
-                                             device=device)
+                                             s4_layernorm=s4_layernorm)
 
         self.final_conv = keras.Sequential()
         self.final_conv.add(keras.layers.Input(shape=(skip_channels, None,)))
@@ -216,7 +210,7 @@ class SSSDS4Imputer(keras.Model):
         self.final_conv.add(keras.layers.Activation(keras.activations.relu))
         self.final_conv.add(ZeroConv1d(skip_channels, out_channels))
 
-    @tf.function
+    # @tf.function
     def call(self, input_data):
         noise, conditional, mask, diffusion_steps = input_data
 

@@ -10,7 +10,7 @@ from einops import rearrange
 import tensorflow_probability as tfp
 
 class CSDIImputer:
-    def __init__(self, device, model_path, log_path, config_path,
+    def __init__(self, model_path, log_path, config_path,
               masking='rm',
               missing_ratio_or_k=0.1,
               epochs=50,
@@ -24,6 +24,7 @@ class CSDIImputer:
               beta_end=0.5,
               num_steps=50,
               schedule='quad',
+              time_layer='transformer',
               is_unconditional=0,
               timeemb=128,
               featureemb=16,
@@ -32,7 +33,6 @@ class CSDIImputer:
 
         '''
 
-        :param device: device
         :param model_path: save path for the result of model
         :param log_path: save path for the log file including tensorboard writer
         :param config_path: save path for the config file
@@ -59,7 +59,6 @@ class CSDIImputer:
         '''
         np.random.seed(0)
         random.seed(0)
-        self.device = device  # torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model_path = model_path
         self.log_path = log_path
         self.config_path = config_path
@@ -85,6 +84,7 @@ class CSDIImputer:
         self.config['diffusion']['beta_end'] = beta_end
         self.config['diffusion']['num_steps'] = num_steps
         self.config['diffusion']['schedule'] = schedule
+        self.config['diffusion']['time_layer'] = time_layer
 
         self.config['model'] = {}
         self.config['model']['missing_ratio_or_k'] = missing_ratio_or_k
@@ -101,7 +101,14 @@ class CSDIImputer:
         with open(config_filename + ".json", "w") as f:
             json.dump(self.config, f, indent=4)
 
-
+        if time_layer == 'S4':
+            print('='*20)
+            print("="*5 + 'CSDI-S4' + "="*5 )
+            print('=' * 20)
+        else:
+            print('=' * 20)
+            print("=" * 2 + 'CSDI-TransFormer' + "=" * 2)
+            print('=' * 20)
         '''
         CSDI imputer
         3 main functions:
@@ -158,7 +165,7 @@ class CSDIImputer:
             with open(config_filename + ".json", "w") as f:
                 json.dump(self.config, f, indent=4)
 
-        self.model = tfCSDI(series.shape[2], self.config, self.device)
+        self.model = tfCSDI(series.shape[2], self.config)
 
         # define optimizer
         p1 = int(0.5 * self.epochs * series.shape[0] / self.batch_size)
@@ -269,7 +276,6 @@ class CSDIImputer:
         path_config: load configuration file
         '''
     def imputer(self,
-               device,
                sample=None,
                gt_mask=None,
                ob_masks=None,
@@ -283,7 +289,6 @@ class CSDIImputer:
         n_samples: number of samples to be generated
         return imputations with shape (Samples, N imputed samples, Length, Channel)
         '''
-        self.device = device
         self.n_samples = tf.constant(n_samples, dtype=tf.int32)
 
         # prepare data set
