@@ -1,7 +1,10 @@
 from imputers.CSDIImputer import *
-import pandas as pd
+import argparse
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--time_layer', '-tl', type=str, default='transformer', help='The time layer, which can be S4 or transformer')
+    args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
     os.environ['TF_GPU_ALLOCATOR']='cuda_malloc_async'
     gpus = tf.config.list_physical_devices('GPU')
@@ -33,7 +36,7 @@ if __name__ == "__main__":
     validation_data = tf.convert_to_tensor(all_data[6400:7680])
     predicton_data = tf.convert_to_tensor(all_data[7680:])
     print('Data loaded')
-    CSDIImputer = CSDIImputer(model_path, log_path, config_path, epochs=50, time_layer='S4')
+    CSDIImputer = CSDIImputer(model_path, log_path, config_path, epochs=50, time_layer=args.tl)
     train_data, validation_data = CSDIImputer.train(training_data, validation_data)
     # test_data = tf.convert_to_tensor(training_data[7000:])
     observed_data, ob_mask, gt_mask, _ = train_data

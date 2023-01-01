@@ -102,13 +102,13 @@ class CSDIImputer:
             json.dump(self.config, f, indent=4)
 
         if time_layer == 'S4':
-            print('='*20)
-            print("="*5 + 'CSDI-S4' + "="*5 )
-            print('=' * 20)
+            print('='*50)
+            print("="*20 + 'CSDI-S4' + "="*20 )
+            print('=' * 50)
         else:
-            print('=' * 20)
-            print("=" * 2 + 'CSDI-TransFormer' + "=" * 2)
-            print('=' * 20)
+            print('=' * 50)
+            print("=" * 17 + 'CSDI-TransFormer' + "=" * 17)
+            print('=' * 50)
         '''
         CSDI imputer
         3 main functions:
@@ -322,17 +322,17 @@ class CSDIImputer:
             mse_current = (((samples_median - c_target) * eval_points) ** 2)
             mae_current = (tf.abs((samples_median - c_target) * eval_points))
 
-            return samples, tf.reduce_sum(mse_current), tf.reduce_sum(mae_current), tf.reduce_sum(eval_points)
+            return samples #, tf.reduce_sum(mse_current), tf.reduce_sum(mae_current), tf.reduce_sum(eval_points)
 
-        all_generated_samples, mse_total, mae_total, evalpoints_total = tf.function(tf.stop_gradient(
+        all_generated_samples = tf.stop_gradient(
                 tf.map_fn(fn = single_batch_imputer, elems=(test_data, test_ob_masks, test_gt_masks),
-                            fn_output_signature=(tf.TensorSpec(shape=[n_samples,B, K, L], dtype=tf.float32),
-                                                tf.TensorSpec(shape=(), dtype=tf.float32),
-                                                tf.TensorSpec(shape=(), dtype=tf.float32),
-                                                tf.TensorSpec(shape=(), dtype=tf.float32)),
-                            parallel_iterations=10
+                            fn_output_signature=tf.TensorSpec(shape=[n_samples,B, K, L], dtype=tf.float32),
+                                                # tf.TensorSpec(shape=(), dtype=tf.float32),
+                                                # tf.TensorSpec(shape=(), dtype=tf.float32),
+                                                # tf.TensorSpec(shape=(), dtype=tf.float32)),
+                            parallel_iterations=50
                       )
-        ))
+        )
 
         # all_start_time = time.time()
         # for i in range(int(sample.shape[0]/self.batch_size)):
@@ -367,5 +367,5 @@ class CSDIImputer:
         # all_end_time = time.time()
         # print("Total imputation uses time {} s".format(int(all_end_time - all_start_time)))
 
-        return all_generated_samples, mse_total, mae_total, evalpoints_total
+        return all_generated_samples #, mse_total, mae_total, evalpoints_total
 
