@@ -82,7 +82,7 @@ class tfCSDI(keras.Model):
     def compute_loss(self, observed_data, cond_mask, observed_mask, observed_tp, is_train=True, set_t=-1):
         side_info = self.get_side_info(observed_tp, cond_mask)
         if is_train:
-            t = tf.random.normal(shape=(tf.shape(observed_data)[0],), minval=0, maxval=self.num_steps, dtype=tf.int32)
+            t = tf.random.uniform(shape=(tf.shape(observed_data)[0],), minval=0, maxval=self.num_steps, dtype=tf.int32)
         else:
             t = tf.ones(shape=(tf.shape(observed_data)[0],), dtype=tf.int32) * set_t  #  num_steps (50) * B
 
