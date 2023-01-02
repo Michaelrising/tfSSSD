@@ -82,23 +82,11 @@ class tfCSDI(keras.Model):
     def compute_loss(self, observed_data, cond_mask, observed_mask, observed_tp, is_train=True, set_t=-1):
         side_info = self.get_side_info(observed_tp, cond_mask)
         if is_train:
-            t = tf.random.uniform(shape=(tf.shape(observed_data)[0],), minval=0, maxval=self.num_steps, dtype=tf.int32)
+            t = tf.random.normal(shape=(tf.shape(observed_data)[0],), minval=0, maxval=self.num_steps, dtype=tf.int32)
         else:
             t = tf.ones(shape=(tf.shape(observed_data)[0],), dtype=tf.int32) * set_t  #  num_steps (50) * B
 
-
-        # is_train = tf.constant(is_train, dtype=tf.bool)
-
-        # train = lambda : tf.random.uniform(shape=(tf.shape(observed_data)[0],), minval=0, maxval=self.num_steps, dtype=tf.int32)
-        #
-        # validate = lambda: tf.ones(shape=(tf.shape(observed_data)[0],), dtype=tf.int32) * set_t # B * num_steps (50)
-        #
-        # t = tf.cond(
-        #     is_train,
-        #     true_fn=lambda : tf.random.uniform(shape=(tf.shape(observed_data)[0],), minval=0, maxval=self.num_steps, dtype=tf.int32),
-        #     false_fn=lambda: tf.ones(shape=(tf.shape(observed_data)[0],), dtype=tf.int32) * set_t # B * num_steps (50)
-        # )
-        noise = tf.random.uniform(tf.shape(observed_data), dtype=observed_data.dtype)
+        noise = tf.random.normal(tf.shape(observed_data), dtype=observed_data.dtype)
         current_alpha = tf.gather(self.alpha_tf, t, axis=0)  # ( (num_steps) * B, 1, 1)
         noisy_data = (current_alpha ** 0.5) * observed_data + (1.0 - current_alpha) ** 0.5 * noise
 
@@ -140,14 +128,12 @@ class tfCSDI(keras.Model):
         side_info = tf.stop_gradient(
             self.get_side_info(observed_tp, cond_mask)
         )
-        # imputed_samples = tf.TensorArray(tf.float32, size=0, dynamic_size=True, clear_after_read=False, element_shape=observed_data.shape)
-        # i=0
 
         @tf.function
         def single_sample_imputer(sample_i):
             current_sample = tf.TensorArray(dtype=observed_data.dtype, size=self.num_steps + 1, clear_after_read=False)
             t = self.num_steps - 1
-            current_sample = current_sample.write(t + 1, tf.random.uniform(observed_data.shape,
+            current_sample = current_sample.write(t + 1, tf.random.normal(observed_data.shape,
                                                                            dtype=observed_data.dtype))
             while t >= 0:
                 # if self.is_unconditional == True:
@@ -167,7 +153,7 @@ class tfCSDI(keras.Model):
                         current_sample.read(t + 1) - coeff2 * predicted))  # .mark_used()
 
                 if t > 0:
-                    noise = tf.random.uniform(observed_data.shape, dtype=observed_data.dtype)
+                    noise = tf.random.normal(observed_data.shape, dtype=observed_data.dtype)
                     sigma = (
                                     (1.0 - self.alpha[t - 1]) / (1.0 - self.alpha[t]) * self.beta[t]
                             ) ** 0.5
@@ -178,86 +164,6 @@ class tfCSDI(keras.Model):
         imputed_samples = tf.stop_gradient(tf.map_fn(fn=single_sample_imputer, elems=i,
                                                      fn_output_signature=tf.TensorSpec(shape=observed_data.shape, dtype=observed_data.dtype),
                                                      parallel_iterations=5))
-        # while i < n_samples:
-        #     current_sample = tf.TensorArray(dtype=observed_data.dtype, size=self.num_steps+1, clear_after_read=False)
-        #     t = self.num_steps - 1
-        #     current_sample = current_sample.write(t+1, tf.random.uniform(observed_data.shape, dtype=observed_data.dtype))#.mark_used()
-        #     while t >= 0:
-        #         # if self.is_unconditional == True:
-        #         #     diff_input = cond_mask * noisy_cond_history[t] + (1.0 - cond_mask) * current_sample
-        #         #     diff_input = tf.expand_dims(diff_input, 1)  # (B,1,K,L)
-        #         # else:
-        #         cond_obs = tf.expand_dims(cond_mask * observed_data, 1)
-        #         noisy_target = tf.expand_dims((1 - cond_mask) * current_sample.read(t+1), 1)
-        #         diff_input = tf.concat([cond_obs, noisy_target], axis=1)  # (B,2,K,L)
-        #         predicted = tf.stop_gradient(
-        #             self.diffmodel.__call__(diff_input, side_info, tf.constant([t]))
-        #         )
-        #
-        #         coeff1 = 1 / self.alpha_hat[t] ** 0.5
-        #         coeff2 = (1 - self.alpha_hat[t]) / (1 - self.alpha[t]) ** 0.5
-        #         current_sample = current_sample.write(t, coeff1 * (current_sample.read(t+1) - coeff2 * predicted))#.mark_used()
-        #
-        #         if t > 0:
-        #             noise = tf.random.uniform(observed_data.shape, dtype=observed_data.dtype)
-        #             sigma = (
-        #                             (1.0 - self.alpha[t - 1]) / (1.0 - self.alpha[t]) * self.beta[t]
-        #                     ) ** 0.5
-        #             current_sample = current_sample.write(t, current_sample.read(t) + sigma * noise)#.mark_used()
-        #         t -= 1
-        #     imputed_samples = imputed_samples.write(i, current_sample.read(0))#.mark_used()
-        #     i += 1
-        # imputed_samples = imputed_samples.stack()
-        # outer_cond = lambda i, n_samples: i < n_samples
-        # inner_cond = lambda t, current_sample: t >= 0
-        #
-        # def inner_body(t, current_sample):
-        #     # if self.is_unconditional == True:
-        #     #     diff_input = cond_mask * noisy_cond_history[t] + (1.0 - cond_mask) * current_sample
-        #     #     diff_input = tf.expand_dims(diff_input, 1)  # (B,1,K,L)
-        #     # else:
-        #     cond_obs = tf.expand_dims(cond_mask * observed_data, 1)
-        #     noisy_target = tf.expand_dims((1 - cond_mask) * current_sample, 1)
-        #     diff_input = tf.concat([cond_obs, noisy_target], axis=1)  # (B,2,K,L)
-        #     predicted = self.diffmodel.__call__(diff_input, side_info, t)
-        #
-        #     coeff1 = 1 / tf.gather(self.alpha_hat, t) ** 0.5
-        #     coeff2 = (1 - tf.gather(self.alpha_hat, t)) / (1 - tf.gather(self.alpha_hat, t)) ** 0.5
-        #     current_sample = coeff1 * (current_sample - coeff2 * predicted)
-        #
-        #     if t > 0:
-        #         noise = tf.random.uniform(current_sample.shape, dtype=current_sample.dtype)
-        #         sigma = (
-        #                         (1.0 - tf.gather(self.alpha, t - 1)) / (1.0 - tf.gather(self.alpha, t)) * tf.gather(self.beta, t)
-        #                 ) ** 0.5
-        #         current_sample += sigma * noise
-        #     return t-1, current_sample
-        #
-        # def outer_body(i, n_samples):
-        #     # generate noisy observation for unconditional model
-        #     # if self.is_unconditional == True:
-        #     #     noisy_obs = observed_data
-        #     #     noisy_cond_history = []
-        #     #     t = 0
-        #     #     while t < self.num_steps:
-        #     #         noise = tf.random.uniform(noisy_obs.shape, dtype=noisy_obs.dtype)
-        #     #         noisy_obs = (self.alpha_hat[t] ** 0.5) * noisy_obs + self.beta[t] ** 0.5 * noise
-        #     #         noisy_cond_history.append(noisy_obs * cond_mask)
-        #     #         t += 1
-        #     # else:
-        #     #     noisy_cond_history = None
-        #     current_sample = tf.random.uniform(observed_data.shape, dtype=observed_data.dtype)
-        #
-        #     t = tf.constant([self.num_steps - 1], dtype=tf.int32)
-        #     inner_loop_vals = (t, current_sample)
-        #     t, current_sample = tf.while_loop(inner_cond, inner_body, inner_loop_vals, back_prop=False)
-        #     imputed_samples.write(tf.reshape(i, []), current_sample)
-        #     # return current_sample
-        #     return i + 1, n_samples
-        #
-        # i = tf.constant([0], dtype=tf.int32)
-        # _ = tf.while_loop(outer_cond, outer_body, loop_vars=[i, n_samples], back_prop=False)
-        # imputed_samples = imputed_samples.stack()
 
         return imputed_samples, observed_data, target_mask, observed_mask, observed_tp
 

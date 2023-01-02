@@ -3,7 +3,9 @@ import argparse
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--time_layer', '-tl', type=str, default='transformer', help='The time layer, which can be S4 or transformer')
+    parser.add_argument('--algo', type=str, default='transformer', help='The Algorithm for imputation: transformer or S4')
+    parser.add_argument('--data', type=str, default='mujuco', help='The data set for training')
+    parser.add_argument('--cuda', type=int, default=0, help='The CUDA device for training')
     args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
     os.environ['TF_GPU_ALLOCATOR']='cuda_malloc_async'
@@ -19,8 +21,8 @@ if __name__ == "__main__":
             # Memory growth must be set before GPUs have been initialized
             print(e)
     current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-    model_path = '../results/mujoco/CSDI-S4/' + current_time + '/csdi_model'
-    log_path = '../log/mujoco/CSDI-S4/' + current_time + '/csdi_log'
+    model_path = '../results/' + args.data + '/CSDI-/' + args.algo + current_time + '/csdi_model'
+    log_path = '../log/' + args.data + '/CSDI-/' + args.algo + current_time + '/csdi_log'
     config_path = './config'
     if not os.path.exists(model_path):
         os.makedirs(model_path)
@@ -36,7 +38,7 @@ if __name__ == "__main__":
     validation_data = tf.convert_to_tensor(all_data[6400:7680])
     predicton_data = tf.convert_to_tensor(all_data[7680:])
     print('Data loaded')
-    CSDIImputer = CSDIImputer(model_path, log_path, config_path, epochs=50, time_layer=args.tl)
+    CSDIImputer = CSDIImputer(model_path, log_path, config_path, epochs=50, time_layer=args.algo)
     train_data, validation_data = CSDIImputer.train(training_data, validation_data)
     # test_data = tf.convert_to_tensor(training_data[7000:])
     observed_data, ob_mask, gt_mask, _ = train_data
