@@ -24,7 +24,7 @@ class CSDIImputer:
               beta_end=0.5,
               num_steps=50,
               schedule='quad',
-              time_layer='transformer',
+              algo='transformer',
               is_unconditional=0,
               timeemb=128,
               featureemb=16,
@@ -84,7 +84,7 @@ class CSDIImputer:
         self.config['diffusion']['beta_end'] = beta_end
         self.config['diffusion']['num_steps'] = num_steps
         self.config['diffusion']['schedule'] = schedule
-        self.config['diffusion']['time_layer'] = time_layer
+        self.config['diffusion']['time_layer'] = algo
 
         self.config['model'] = {}
         self.config['model']['missing_ratio_or_k'] = missing_ratio_or_k
@@ -101,9 +101,9 @@ class CSDIImputer:
         with open(config_filename + ".json", "w") as f:
             json.dump(self.config, f, indent=4)
 
-        if time_layer == 'S4':
+        if algo == 'S4':
             print('='*50)
-            print("="*20 + 'CSDI-S4' + "="*20 )
+            print("="*22 + 'CSDI-S4' + "="*22)
             print('=' * 50)
         else:
             print('=' * 50)
@@ -168,9 +168,9 @@ class CSDIImputer:
         self.model = tfCSDI(series.shape[2], self.config)
 
         # define optimizer
-        p1 = int(0.5 * self.epochs * series.shape[0] / self.batch_size)
-        p2 = int(0.65 * self.epochs * series.shape[0] / self.batch_size)
-        p3 = int(0.85 * self.epochs * series.shape[0] / self.batch_size)
+        p1 = int(0.4 * self.epochs * series.shape[0] / self.batch_size)
+        p2 = int(0.6 * self.epochs * series.shape[0] / self.batch_size)
+        p3 = int(0.8 * self.epochs * series.shape[0] / self.batch_size)
         boundaries = [p1, p2, p3]
         values = [self.lr, self.lr * 0.1, self.lr * 0.1 * 0.1, self.lr * 0.1 * 0.1 * 0.1]
 
@@ -199,6 +199,7 @@ class CSDIImputer:
         else:
             validation_data = None
         self.model.compile(optimizer=optimizer)
+        self.model.train_step((train_data, ))
         history = self.model.fit(x=train_data, batch_size=self.batch_size, epochs=self.epochs, validation_data=(validation_data, ),
                                 callbacks=[tensorboard_callback,
                                          earlyStop_loss_callback,

@@ -21,9 +21,7 @@ class tfCSDI(keras.Model):
         if self.is_unconditional == False:
             self.emb_total_dim += 1  # for conditional mask
 
-        self.embed_layer = keras.Sequential()
-        self.embed_layer.add(keras.layers.Input(shape=(self.target_dim,)))
-        self.embed_layer.add(keras.layers.Embedding(input_dim=self.target_dim, output_dim=self.emb_feature_dim))
+        self.embed_layer = keras.layers.Embedding(input_dim=self.target_dim, output_dim=self.emb_feature_dim)
 
         config_diff = config["diffusion"]
         config_diff["side_dim"] = self.emb_total_dim
@@ -40,7 +38,7 @@ class tfCSDI(keras.Model):
             self.beta = tf.linspace(config_diff["beta_start"], config_diff["beta_end"], self.num_steps)
 
         self.alpha_hat = 1 - self.beta
-        self.alpha = tf.math.cumprod(self.alpha_hat)  # TODO numpy default is flattened need to check shape
+        self.alpha = tf.math.cumprod(self.alpha_hat)
         self.alpha_tf = tf.expand_dims(tf.expand_dims(tf.cast(self.alpha, dtype=tf.float32), 1), 1)
         self.loss_tracker = tf.keras.metrics.Mean(name="loss")
         # self.val_loss_tracker = tf.keras.metrics.Mean(name="val_loss")
@@ -56,10 +54,8 @@ class tfCSDI(keras.Model):
         div_term = tf.cast(div_term, dtype=tf.float32)
         # pe[:, :, 0::2] = tf.math.sin(position * div_term)
         pe_values = tf.stack([tf.math.sin(position * div_term), tf.math.cos(position * div_term)], axis=-1)  # B L 64 2
-        pe_values = tf.reshape(pe_values, [tf.shape(pe_values)[0], tf.shape(pe_values)[1],
-                                           tf.shape(pe_values)[2] * 2])  # B 100 d_model
-        pe = pe_values
-        return pe
+        pe_values = tf.reshape(pe_values, [tf.shape(pe_values)[0], tf.shape(pe_values)[1], d_model])  # B L 64*2
+        return pe_values
 
     def get_side_info(self, observed_tp, cond_mask):
         B, K, L = cond_mask.shape
@@ -67,8 +63,8 @@ class tfCSDI(keras.Model):
         time_embed = tf.expand_dims(time_embed, 2)  # B d_model 1 L
         time_embed = tf.tile(time_embed, [1, 1, K, 1])  # B d_model K L
         # input to embed_layer is  self.target_dim, output is self.target_dim * self.emb_feature_dim (14 *16)
-        feature = tf.reshape(tf.range(self.target_dim), [1, -1])  # B * target_dim
-        feature_embed = tf.expand_dims(self.embed_layer(feature), 0)  # B * target_dim * embed_output_dim
+        # TODO: time embedding has different results compared to torch version
+        feature_embed = tf.expand_dims(tf.expand_dims(self.embed_layer(tf.range(self.target_dim)), 0), 0)  # 1 * 1 * target_dim * embed_output_dim
         feature_embed = tf.tile(feature_embed, [tf.shape(cond_mask)[0], L, 1, 1])
         side_info = tf.concat([time_embed, feature_embed], axis=-1)  # (B,L,K,*)
         side_info = rearrange(side_info, 'i j k l -> i l k j')  # (B,*,K,L)
@@ -82,7 +78,7 @@ class tfCSDI(keras.Model):
     def compute_loss(self, observed_data, cond_mask, observed_mask, observed_tp, is_train=True, set_t=-1):
         side_info = self.get_side_info(observed_tp, cond_mask)
         if is_train:
-            t = tf.random.uniform(shape=(tf.shape(observed_data)[0],), minval=0, maxval=self.num_steps, dtype=tf.int32)
+            t = tf.random.uniform(shape=(tf.shape(observed_data)[0],), minval=0, maxval=self.num_steps+1, dtype=tf.int32)
         else:
             t = tf.ones(shape=(tf.shape(observed_data)[0],), dtype=tf.int32) * set_t  #  num_steps (50) * B
 
@@ -131,9 +127,9 @@ class tfCSDI(keras.Model):
 
         @tf.function
         def single_sample_imputer(sample_i):
-            current_sample = tf.TensorArray(dtype=observed_data.dtype, size=self.num_steps + 1, clear_after_read=False)
+            current_sample = tf.TensorArray(dtype=observed_data.dtype, size=1, clear_after_read=False)
             t = self.num_steps - 1
-            current_sample = current_sample.write(t + 1, tf.random.normal(observed_data.shape,
+            current_sample = current_sample.write(0, tf.random.normal(observed_data.shape,
                                                                            dtype=observed_data.dtype))
             while t >= 0:
                 # if self.is_unconditional == True:
@@ -141,7 +137,7 @@ class tfCSDI(keras.Model):
                 #     diff_input = tf.expand_dims(diff_input, 1)  # (B,1,K,L)
                 # else:
                 cond_obs = tf.expand_dims(cond_mask * observed_data, 1)
-                noisy_target = tf.expand_dims((1 - cond_mask) * current_sample.read(t + 1), 1)
+                noisy_target = tf.expand_dims((1 - cond_mask) * current_sample.read(0), 1)
                 diff_input = tf.concat([cond_obs, noisy_target], axis=1)  # (B,2,K,L)
                 predicted = tf.stop_gradient(
                     self.diffmodel.__call__(diff_input, side_info, tf.constant([t]))
@@ -149,15 +145,15 @@ class tfCSDI(keras.Model):
 
                 coeff1 = 1 / self.alpha_hat[t] ** 0.5
                 coeff2 = (1 - self.alpha_hat[t]) / (1 - self.alpha[t]) ** 0.5
-                current_sample = current_sample.write(t, coeff1 * (
-                        current_sample.read(t + 1) - coeff2 * predicted))  # .mark_used()
+                current_sample = current_sample.write(0, coeff1 * (
+                        current_sample.read(0) - coeff2 * predicted))  # .mark_used()
 
                 if t > 0:
                     noise = tf.random.normal(observed_data.shape, dtype=observed_data.dtype)
                     sigma = (
                                     (1.0 - self.alpha[t - 1]) / (1.0 - self.alpha[t]) * self.beta[t]
                             ) ** 0.5
-                    current_sample = current_sample.write(t, current_sample.read(t) + sigma * noise)  # .mark_used()
+                    current_sample = current_sample.write(0, current_sample.read(0) + sigma * noise)  # .mark_used()
                 t -= 1
             return current_sample.read(0)
         i = tf.range(n_samples)
@@ -172,10 +168,10 @@ class tfCSDI(keras.Model):
         self.optimizer = optimizer
         self.loss_fn = self.compute_loss
 
-    @tf.function(input_signature=[((tf.TensorSpec([None, 14, 100], tf.float32),
-                                    tf.TensorSpec([None, 14, 100], tf.float32),
-                                    tf.TensorSpec([None, 14, 100], tf.float32),
-                                    tf.TensorSpec([None, 14, 100], tf.float32)),)])
+    # @tf.function(input_signature=[((tf.TensorSpec([None, 14, 100], tf.float32),
+    #                                 tf.TensorSpec([None, 14, 100], tf.float32),
+    #                                 tf.TensorSpec([None, 14, 100], tf.float32),
+    #                                 tf.TensorSpec([None, 14, 100], tf.float32)),)])
     def train_step(self, batch):
         observed_data, observed_mask, _, cond_mask = batch[0]
         # observation mask denotes the original data missing, gt_masks is manmade mask
@@ -196,7 +192,7 @@ class tfCSDI(keras.Model):
         self.loss_tracker.update_state(loss)
         return {"loss": self.loss_tracker.result()}
 
-    @tf.function
+    # @tf.function
     def test_step(self, batch):
         observed_data, observed_mask, gt_mask, _ = batch[0]
         # observation mask denotes the original data missing, gt_masks is man-made mask
@@ -209,7 +205,7 @@ class tfCSDI(keras.Model):
             loss = self.loss_fn(observed_data, cond_mask, observed_mask, observed_tp, is_train=False, set_t=t)
             return loss
         t = tf.range(self.num_steps)
-        @tf.function
+        # @tf.function
         def map_fn_no_gradient():
             LOSS_SUM = tf.stop_gradient(tf.map_fn(body, elems=t, parallel_iterations=self.num_steps, fn_output_signature=tf.TensorSpec(shape=(), dtype=tf.float32)))
             return LOSS_SUM

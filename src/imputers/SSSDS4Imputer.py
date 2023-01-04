@@ -210,7 +210,7 @@ class SSSDS4Imputer(keras.Model):
         self.final_conv.add(keras.layers.Activation(keras.activations.relu))
         self.final_conv.add(ZeroConv1d(skip_channels, out_channels))
 
-    # @tf.function
+    @tf.function
     def call(self, input_data):
         noise, conditional, mask, diffusion_steps = input_data
 

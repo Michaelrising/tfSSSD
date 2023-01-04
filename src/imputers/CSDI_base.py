@@ -236,7 +236,7 @@ class diff_CSDI(keras.Model):
                 )
             )
 
-    @tf.function
+    # @tf.function
     def __call__(self, x, cond_info, t, training=True):
         B, inputdim, K, L = x.shape
         x = rearrange(x, '... k l -> ... (k l)')

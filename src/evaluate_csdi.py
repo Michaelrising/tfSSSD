@@ -1,37 +1,35 @@
 from imputers.CSDIImputer import *
 import os
 import argparse
-# from pudb import set_trace
 
 
 if __name__ == "__main__":
 
     # current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
     parser = argparse.ArgumentParser()
-    parser.add_argument('--time_layer', '-tl', type=str, default='transformer',
-                        help='The time layer, which can be S4 or transformer')
-    parser.add_argument('--location_time', type=str, default='20221230-111454',
-                        help='The location of the log file')
-    parser.add_argument('--cuda', type=int, default=0,
-                        help='The GPU device for this training')
+    parser.add_argument('--model_loc', type=str, default='20221230-111454', help='The location of the log file')
+    parser.add_argument('--algo', type=str, default='transformer', help='The Algorithm for imputation: transformer or S4')
+    parser.add_argument('--data', type=str, default='mujoco', help='The data set for training')
+    parser.add_argument('--cuda', type=int, default=0, help='The CUDA device for training')
+    parser.add_argument('--n_samples', '-n', type=int, default=50, help='The number of samples to evaluate')
     args = parser.parse_args()
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda)
-    model_path = '../results/mujoco/CSDI/' if args.time_layer == 'transformer' else '../results/mujoco/CSDI-S4/'
+    model_path = '../results/' + args.data + '/CSDI-' + args.algo + '/'
     files_list = os.listdir(model_path)
     target_file = '00000000-000000'
     for file in files_list:
         if file.startswith('2022'):
             target_file = max(target_file, file)
-    target_file = args.location_time
-    model_path = model_path +target_file + '/csdi_model'
-    log_path = '../log/mujoco/CSDI/' if args.time_layer == 'transformer' else '../log/mujoco/CSDI-S4/'
+    target_file = args.model_loc
+    model_path = model_path + target_file + '/csdi_model'
+    log_path = '../log/' + args.data + '/CSDI-' + args.algo + '/'
     log_path = log_path + target_file + '/csdi_log'
     config_path = './config'
     # load data from training
     observed_data, ob_mask, gt_mask = np.load(log_path + '/observed_data.npy'), np.load(log_path + '/ob_mask.npy'), np.load(log_path + '/gt_mask.npy')
 
-    CSDIImputer = CSDIImputer(model_path, log_path, config_path, time_layer=args.time_layer)
+    CSDIImputer = CSDIImputer(model_path, log_path, config_path, algo=args.algo)
 
     model_imputer = tfCSDI(observed_data.shape[1], CSDIImputer.config)
 
