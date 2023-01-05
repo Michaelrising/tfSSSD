@@ -422,7 +422,7 @@ class SSKernelNPLR(keras.Model):
         C_ = C_ - prod
         C_ = C_[..., :self.N] # Take conjugate pairs again
         # self.C.copy_(_c2r(C_))
-        self.C = tf.identity(_c2r(C_))
+        self.C = tf.stop_gradient(tf.identity(_c2r(C_)))
 
         if double_length:
             self.L *= 2
@@ -435,12 +435,9 @@ class SSKernelNPLR(keras.Model):
         omega = omega ** np.arange(0, L // 2 + 1)
         omega = tf.constant(omega, dtype=dtype)  # \omega_{2L}
         z = 2 * (1 - omega) / (1 + omega)
-        # TODO buffer in tensorflow
         if cache:
-            setattr(self, 'omega', tf.Variable(_c2r(omega), name='omega', trainable=False))
-            setattr(self, 'z', tf.Variable(_c2r(z), name='z', trainable=False))
-            # self.register_buffer("omega", )
-            # self.register_buffer("z", _c2r(z))
+            setattr(self, 'omega', tf.stop_gradient(tf.Variable(_c2r(omega), name='omega', trainable=False)))
+            setattr(self, 'z', tf.stop_gradient(tf.Variable(_c2r(z), name='z', trainable=False)))
         return omega, z
 
     def __init__(
@@ -955,7 +952,7 @@ def get_tf_trans(heads=8, layers=1, channels=64):
     outputs = encoder_inputs
     for _ in range(layers):
         outputs = keras.keras_nlp.TransformerEncoder(
-            intermediate_dim=64, num_heads=heads,activation="gelu"
+            intermediate_dim=64, num_heads=heads, activation="gelu"
         )(input=outputs)
 
     return keras.Model(encoder_inputs, outputs, name="encoder")

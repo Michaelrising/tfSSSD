@@ -187,7 +187,6 @@ class DiffusionEmbedding(keras.Model):
         super().__init__()
         if projection_dim is None:
             projection_dim = embedding_dim
-        # # TODO persistent?
         setattr(self, "embedding", self._build_embedding(num_steps, int(embedding_dim / 2)))
         self.projection = keras.Sequential()
         self.projection.add(keras.layers.Dense(projection_dim, activation=swish))
@@ -234,7 +233,7 @@ class diff_CSDI(keras.Model):
                 )
             )
 
-    # @tf.function
+    @tf.function
     def __call__(self, x, cond_info, t, training=True):
         B, inputdim, K, L = x.shape
         x = rearrange(x, 'b d k l -> b d (k l)')
@@ -246,7 +245,7 @@ class diff_CSDI(keras.Model):
         skip = tf.TensorArray(dtype=tf.float32, size=len(self.residual_layers))
         for i, layer in enumerate(self.residual_layers):
             x, skip_connection = layer.call(x, cond_info, diffusion_emb, training=training)
-            skip.write(i, skip_connection).mark_used() # skip =
+            skip = skip.write(i, skip_connection) #.mark_used() #
 
         x = tf.reduce_sum(skip.stack(), axis=0) / tf.math.sqrt(float(len(self.residual_layers)))
         # x = tf.reshape(x, [B, self.channels, K * L])
@@ -308,6 +307,7 @@ class ResidualBlock(keras.Model):
         y = rearrange(y, ' b l k c -> b c (k l)', l=L)
         return y
 
+    @tf.function
     def call(self, x, cond_info, diffusion_emb, training=True):
         B, channel, K, L = x.shape
         _, cond_dim, _, _ = cond_info.shape

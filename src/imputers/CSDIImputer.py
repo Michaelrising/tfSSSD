@@ -168,8 +168,8 @@ class CSDIImputer:
         self.model = tfCSDI(series.shape[2], self.config)
 
         # define optimizer
-        p1 = int(0.4 * self.epochs * series.shape[0] / self.batch_size)
-        p2 = int(0.6 * self.epochs * series.shape[0] / self.batch_size)
+        p1 = int(0.3 * self.epochs * series.shape[0] / self.batch_size)
+        p2 = int(0.5 * self.epochs * series.shape[0] / self.batch_size)
         p3 = int(0.8 * self.epochs * series.shape[0] / self.batch_size)
         boundaries = [p1, p2, p3]
         values = [self.lr, self.lr * 0.1, self.lr * 0.1 * 0.1, self.lr * 0.1 * 0.1 * 0.1]
@@ -199,7 +199,7 @@ class CSDIImputer:
         else:
             validation_data = None
         self.model.compile(optimizer=optimizer)
-        self.model.train_step((train_data, ))
+        # self.model.train_step((train_data, ))
         history = self.model.fit(x=train_data, batch_size=self.batch_size, epochs=self.epochs, validation_data=(validation_data, ),
                                 callbacks=[tensorboard_callback,
                                          earlyStop_loss_callback,
@@ -331,7 +331,7 @@ class CSDIImputer:
                                                 # tf.TensorSpec(shape=(), dtype=tf.float32),
                                                 # tf.TensorSpec(shape=(), dtype=tf.float32),
                                                 # tf.TensorSpec(shape=(), dtype=tf.float32)),
-                            parallel_iterations=50
+                            parallel_iterations=50,
                       )
         )
 

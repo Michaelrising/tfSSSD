@@ -168,10 +168,10 @@ class tfCSDI(keras.Model):
         self.optimizer = optimizer
         self.loss_fn = self.compute_loss
 
-    # @tf.function(input_signature=[((tf.TensorSpec([None, 14, 100], tf.float32),
-    #                                 tf.TensorSpec([None, 14, 100], tf.float32),
-    #                                 tf.TensorSpec([None, 14, 100], tf.float32),
-    #                                 tf.TensorSpec([None, 14, 100], tf.float32)),)])
+    @tf.function(input_signature=[((tf.TensorSpec([None, 14, 100], tf.float32),
+                                    tf.TensorSpec([None, 14, 100], tf.float32),
+                                    tf.TensorSpec([None, 14, 100], tf.float32),
+                                    tf.TensorSpec([None, 14, 100], tf.float32)),)])
     def train_step(self, batch):
         observed_data, observed_mask, _, cond_mask = batch[0]
         # observation mask denotes the original data missing, gt_masks is manmade mask
@@ -192,7 +192,7 @@ class tfCSDI(keras.Model):
         self.loss_tracker.update_state(loss)
         return {"loss": self.loss_tracker.result()}
 
-    # @tf.function
+    @tf.function
     def test_step(self, batch):
         observed_data, observed_mask, gt_mask, _ = batch[0]
         # observation mask denotes the original data missing, gt_masks is man-made mask
