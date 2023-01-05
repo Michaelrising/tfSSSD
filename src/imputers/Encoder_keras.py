@@ -83,6 +83,7 @@ class EncoderLayer(tf.keras.layers.Layer):
     x = self.ffn.call(x)
     return x
 
+
 class Encoder(tf.keras.layers.Layer):
     def __init__(self, *, num_layers, d_model, num_heads,
                dff, dropout_rate=0.1):

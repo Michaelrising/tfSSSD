@@ -3,26 +3,27 @@ import argparse
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--algo', type=str, default='transformer', help='The Algorithm for imputation: transformer or S4')
-    parser.add_argument('--data', type=str, default='mujuco', help='The data set for training')
+    parser.add_argument('--algo', type=str, default='S4', help='The Algorithm for imputation: transformer or S4')
+    parser.add_argument('--data', type=str, default='mujoco', help='The data set for training')
     parser.add_argument('--cuda', type=int, default=0, help='The CUDA device for training')
+    parser.add_argument('--epochs', type=int, default=1, help='The number of epochs for training')
     args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda)
-    # os.environ['TF_GPU_ALLOCATOR']='cuda_malloc_async'
-    # gpus = tf.config.list_physical_devices('GPU')
-    # if gpus:
-    #     try:
-    #         # Currently, memory growth needs to be the same across GPUs
-    #         for gpu in gpus:
-    #             tf.config.experimental.set_memory_growth(gpu, True)
-    #         logical_gpus = tf.config.list_logical_devices('GPU')
-    #         print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-    #     except RuntimeError as e:
-    #         # Memory growth must be set before GPUs have been initialized
-    #         print(e)
+    os.environ['TF_GPU_ALLOCATOR']='cuda_malloc_async'
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        try:
+            # Currently, memory growth needs to be the same across GPUs
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            logical_gpus = tf.config.list_logical_devices('GPU')
+            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+        except RuntimeError as e:
+            # Memory growth must be set before GPUs have been initialized
+            print(e)
     current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-    model_path = '../results/' + args.data + '/CSDI-/' + args.algo + current_time + '/csdi_model'
-    log_path = '../log/' + args.data + '/CSDI-/' + args.algo + current_time + '/csdi_log'
+    model_path = '../results/' + args.data + '/CSDI-' + args.algo + '/' + current_time + '/csdi_model'
+    log_path = '../log/' + args.data + '/CSDI-' + args.algo + '/' + current_time + '/csdi_log'
     config_path = './config'
     if not os.path.exists(model_path):
         os.makedirs(model_path)
@@ -34,11 +35,11 @@ if __name__ == "__main__":
     all_data = np.load('../datasets/Mujoco/train_mujoco.npy')
     # training_data = np.split(training_data, 160, 0)
     all_data = np.array(all_data)
-    training_data = tf.convert_to_tensor(all_data[:6400])
+    training_data = tf.convert_to_tensor(all_data[:64])
     validation_data = tf.convert_to_tensor(all_data[6400:7680])
     predicton_data = tf.convert_to_tensor(all_data[7680:])
     print('Data loaded')
-    CSDIImputer = CSDIImputer(model_path, log_path, config_path, epochs=50, time_layer=args.algo)
+    CSDIImputer = CSDIImputer(model_path, log_path, config_path, epochs=args.epochs, algo=args.algo)
     train_data, validation_data = CSDIImputer.train(training_data, validation_data)
     # test_data = tf.convert_to_tensor(training_data[7000:])
     observed_data, ob_mask, gt_mask, _ = train_data

@@ -21,7 +21,7 @@ class tfCSDI(keras.Model):
         if self.is_unconditional == False:
             self.emb_total_dim += 1  # for conditional mask
 
-        self.embed_layer = keras.layers.Embedding(input_dim=self.target_dim, output_dim=self.emb_feature_dim)
+        self.embed_layer = keras.layers.Embedding(input_dim=self.target_dim, output_dim=self.emb_feature_dim, trainable=True)
 
         config_diff = config["diffusion"]
         config_diff["side_dim"] = self.emb_total_dim
@@ -63,7 +63,7 @@ class tfCSDI(keras.Model):
         time_embed = tf.expand_dims(time_embed, 2)  # B d_model 1 L
         time_embed = tf.tile(time_embed, [1, 1, K, 1])  # B d_model K L
         # input to embed_layer is  self.target_dim, output is self.target_dim * self.emb_feature_dim (14 *16)
-        # TODO: time embedding has different results compared to torch version
+        # TODO: feature embedding has different results compared to torch version
         feature_embed = tf.expand_dims(tf.expand_dims(self.embed_layer(tf.range(self.target_dim)), 0), 0)  # 1 * 1 * target_dim * embed_output_dim
         feature_embed = tf.tile(feature_embed, [tf.shape(cond_mask)[0], L, 1, 1])
         side_info = tf.concat([time_embed, feature_embed], axis=-1)  # (B,L,K,*)
@@ -83,7 +83,7 @@ class tfCSDI(keras.Model):
             t = tf.ones(shape=(tf.shape(observed_data)[0],), dtype=tf.int32) * set_t  #  num_steps (50) * B
 
         noise = tf.random.normal(tf.shape(observed_data), dtype=observed_data.dtype)
-        current_alpha = tf.gather(self.alpha_tf, t, axis=0)  # ( (num_steps) * B, 1, 1)
+        current_alpha = tf.gather(self.alpha_tf, t, axis=0)  # (B, 1, 1)
         noisy_data = (current_alpha ** 0.5) * observed_data + (1.0 - current_alpha) ** 0.5 * noise
 
         total_input = self.set_input_to_diffmodel(noisy_data, observed_data, cond_mask, is_train)

@@ -1,15 +1,17 @@
-import pandas_datareader as pdr
 import datetime
 import pandas as pd
-import csv
 import os
 import yfinance as yf
+import numpy as np
 
 start = datetime.datetime(2013, 1, 2)
 end = datetime.datetime(2023, 1, 1)
 start_time = str(start.date())
 end_time = str(end.date())
 
+weekmasks = "Mon Tue Wed Thu Fri"
+all_dates = pd.bdate_range(start=datetime.datetime(2013, 1, 1), end=datetime.datetime(2023, 1, 1), name='Date', freq='C', weekmask=weekmasks, holidays=[])
+# all_dates = all_dates.dt.dayofweek
 url0 = 'https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average'
 tb0 = pd.read_html(url0)[1]
 DJ = tb0.Symbol
@@ -39,25 +41,27 @@ for i, index in enumerate(list(stocks_dic.keys())):
             print("The history of stock {} less than 10 years, IGNORE it!".format(ticker))
             # stocks_list = stocks_list.drop(labels=i)
         else:
-            data.to_csv(file_name)
-            new_stock_list.append(ticker)
 
+            index0 = all_dates.isin(data.index)
+            data_w_na = pd.DataFrame(index = all_dates, columns=['Date', 'High', 'Low', 'Close', 'Adj Close', 'Volume'])
+            data_w_na.iloc[index0] = data.copy(deep=True)
+            data_w_na.to_csv(file_name)
+            print(data_w_na.shape)
+            new_stock_list.append(ticker)
+    all_stocks = []
     for (i, ticker) in enumerate(new_stock_list):
         file_name = '../datasets/Stocks/' + index + '/' + ticker + '_' + start_time + '_to_' + end_time + '.csv'
         print(file_name)
         data = pd.read_csv(file_name, parse_dates=['Date'], index_col=['Date'])
         print(data.shape)
-        data['Name'] = ticker
         data.to_csv(file_name)
+        all_stocks.append(data.to_numpy())
 
-        if i == 0:
-            all_stocks = data
-        else:
-            all_stocks = all_stocks.append(data)
-
-    print(all_stocks.shape)
-    all_stocks_file_name = '../datasets/Stocks/' + index +'_all_stocks_' + start_time + '_to_' + end_time + '.csv'
-    all_stocks.to_csv(all_stocks_file_name)
+    all_stocks_3dim = np.stack(all_stocks) # Num_stocks * Time_length * Features
+    all_stocks_3dim = all_stocks_3dim.transpose([1, 0, 2])
+    print(all_stocks_3dim.shape)
+    all_stocks_file_name = '../datasets/Stocks/' + index +'_all_stocks_' + start_time + '_to_' + end_time + '.npy'
+    np.save(all_stocks_file_name, all_stocks_3dim)
 
 
 
