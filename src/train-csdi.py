@@ -50,6 +50,14 @@ if __name__ == "__main__":
     np.save(log_path + '/observed_data.npy', observed_data)
     np.save(log_path + '/ob_mask.npy', ob_mask)
     np.save(log_path + '/gt_mask.npy', gt_mask)
+    imputed_data = CSDIImputer.imputer(sample=observed_data, gt_mask=gt_mask, ob_masks=ob_mask, n_samples=5)
+    # imputations = imputed_data.stack()  # int(sample.shape[0]/self.batch_size) * n_samples * B * K * L
+    imputations = rearrange(imputed_data, 'i j b k l -> i b j l k')
+    # ob_data_numpy = observed_data
+    # gt_mask_numpy = gt_mask
+    # # indx_imputation = ~gt_mask_numpy
+    imp_data_numpy = imputations.numpy()
+    np.save(log_path+'/imputed_data.npy', imp_data_numpy)
 
 
     # model_imputer = tfCSDI(observed_data.shape[1], CSDIImputer.config, CSDIImputer.device)

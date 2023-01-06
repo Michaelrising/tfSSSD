@@ -165,7 +165,6 @@ def init_CV(init_fun, rng, shape, V):
     return tf.concat((tf.expand_dims(CV_real, -1), tf.expand_dims(CV_imag, -1)), axis=-1)
 
 # TODO done here today
-
 # Discretization functions
 def discretize_bilinear(Lambda, B_tilde, Delta):
     """ Discretize a diagonalized, continuous-time linear SSM

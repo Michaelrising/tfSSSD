@@ -4,7 +4,8 @@ import tensorflow as tf
 from tensorflow import keras
 import math
 from einops import rearrange
-from .Encoder_keras import Encoder
+# from .Encoder_keras import Encoder
+import tensorflow_models as tfm
 from .S4Model import S4Layer
 
 
@@ -167,7 +168,12 @@ def ImputeDataset(series, mask):
 
 
 def get_torch_trans(heads=8, layers=1, in_channels=64, out_channels=64):
-    return Encoder(num_layers=layers, d_model=out_channels, num_heads=heads, dff=64) # the input should be batch * seq * feature
+    return tfm.nlp.models.TransformerEncoder(num_layers=layers,
+                                            num_attention_heads=heads,
+                                            intermediate_size=64,
+                                            activation='gelu',) # (batch_size, input_length, hidden_size)
+
+    # return Encoder(num_layers=layers, d_model=out_channels, num_heads=heads, dff=64) # the input should be batch * seq * feature
 
 
 def Conv1d_with_init(in_channels, out_channels, kernel_size, initializer=None, activation=None):
@@ -269,13 +275,19 @@ class ResidualBlock(keras.Model):
         self.time_layer = keras.Sequential()
         if time_layer=='transformer':
             self.time_layer.add(keras.layers.Input((None, channels)))
-            self.time_layer.add(get_torch_trans(heads=nheads, layers=1, in_channels=channels, out_channels=channels))
+            self.time_layer.add(tfm.nlp.models.TransformerEncoder(num_layers=1,
+                                            num_attention_heads=nheads,
+                                            intermediate_size=64,
+                                            activation='gelu',)) # (batch_size, input_length, hidden_size)
         else:
             # self.time_layer.add(keras.layers.Input((channels, None)))
             self.time_layer.add(S4Layer(features=channels, lmax=100))
         self.feature_layer = keras.Sequential()
         self.feature_layer.add(keras.layers.Input((None, channels)))
-        self.feature_layer.add(get_torch_trans(heads=nheads, layers=1, in_channels=channels, out_channels=channels))
+        self.feature_layer.add(tfm.nlp.models.TransformerEncoder(num_layers=1,
+                                            num_attention_heads=nheads,
+                                            intermediate_size=64,
+                                            activation='gelu',)) # (batch_size, input_length, hidden_size)
 
     def forward_time(self, y, base_shape, training=True):
         B, channel, K, L = base_shape

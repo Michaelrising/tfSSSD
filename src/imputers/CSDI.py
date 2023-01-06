@@ -156,8 +156,8 @@ class tfCSDI(keras.Model):
                     current_sample = current_sample.write(0, current_sample.read(0) + sigma * noise)  # .mark_used()
                 t -= 1
             return current_sample.read(0)
-        i = tf.range(n_samples)
-        imputed_samples = tf.stop_gradient(tf.map_fn(fn=single_sample_imputer, elems=i,
+
+        imputed_samples = tf.stop_gradient(tf.map_fn(fn=single_sample_imputer, elems=tf.range(n_samples),
                                                      fn_output_signature=tf.TensorSpec(shape=observed_data.shape, dtype=observed_data.dtype),
                                                      parallel_iterations=5))
 

@@ -120,7 +120,8 @@ class CSDIImputer:
     def train(self,
               series,
               validation_series=None,
-              masking='rm'
+              masking='rm',
+              infer_flag=False,
               ):
 
         '''
@@ -199,20 +200,29 @@ class CSDIImputer:
         else:
             validation_data = None
         self.model.compile(optimizer=optimizer)
-        # self.model.train_step((train_data, ))
-        history = self.model.fit(x=train_data, batch_size=self.batch_size, epochs=self.epochs, validation_data=(validation_data, ),
-                                callbacks=[tensorboard_callback,
-                                         earlyStop_loss_callback,
-                                         best_checkpoint_callback
-                                         ])
-        # model.save_weights(self.model_path, save_format='tf')
+
         # Visualize the training progress of the model.
-        plt.plot(history.history["loss"], c='blue')
-        plt.plot(history.history["val_loss"], c='orange')
-        plt.grid()
-        plt.title("Loss")
-        plt.savefig(self.log_path + '/loss.png')
-        plt.show()
+        if not infer_flag:
+            history = self.model.fit(x=train_data, batch_size=self.batch_size, epochs=self.epochs,
+                                     validation_data=(validation_data,),
+                                     callbacks=[tensorboard_callback,
+                                                earlyStop_loss_callback,
+                                                best_checkpoint_callback
+                                                ])
+            plt.plot(history.history["loss"], c='blue')
+            plt.plot(history.history["val_loss"], c='orange')
+            plt.grid()
+            plt.title("Loss")
+            plt.savefig(self.log_path + '/loss.png')
+            plt.show()
+        else:
+            self.model.fit(x=train_data, batch_size=self.batch_size, epochs=1)
+        self.model.built = True
+        self.model.embed_layer.built = True
+        self.model.diffmodel.built = True
+        self.model.diffmodel.diffusion_embedding.built = True
+        for i in range(len(self.model.diffmodel.residual_block)):
+            self.model.diffmodel.residual_block[i].built = True
         return train_data, validation_data # ,history
 
     def process_data(self, train_data):
