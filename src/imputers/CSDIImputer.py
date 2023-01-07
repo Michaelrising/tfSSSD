@@ -4,18 +4,18 @@ from .CSDI import *
 import matplotlib.pyplot as plt
 import os
 import json
-from datetime import datetime
+from tqdm import tqdm
 import time
-from einops import rearrange
-import tensorflow_probability as tfp
+from absl import logging as absl_logging
+absl_logging.set_verbosity(absl_logging.ERROR)
 
 class CSDIImputer:
     def __init__(self, model_path, log_path, config_path,
               masking='rm',
               missing_ratio_or_k=0.1,
               epochs=50,
-              batch_size=32,
-              lr=1.0e-3,
+              batch_size=64,
+              lr=1.0e-4,
               layers=4,
               channels=64,
               nheads=8,
@@ -62,7 +62,7 @@ class CSDIImputer:
         self.model_path = model_path
         self.log_path = log_path
         self.config_path = config_path
-        self.batch_size = 16
+        self.batch_size = batch_size
         self.model = None
         self.epochs = epochs
         self.lr = lr
@@ -169,8 +169,8 @@ class CSDIImputer:
         self.model = tfCSDI(series.shape[2], self.config)
 
         # define optimizer
-        p1 = int(0.3 * self.epochs * series.shape[0] / self.batch_size)
-        p2 = int(0.5 * self.epochs * series.shape[0] / self.batch_size)
+        p1 = int(0.4 * self.epochs * series.shape[0] / self.batch_size)
+        p2 = int(0.6 * self.epochs * series.shape[0] / self.batch_size)
         p3 = int(0.8 * self.epochs * series.shape[0] / self.batch_size)
         boundaries = [p1, p2, p3]
         values = [self.lr, self.lr * 0.1, self.lr * 0.1 * 0.1, self.lr * 0.1 * 0.1 * 0.1]
@@ -178,12 +178,12 @@ class CSDIImputer:
         learning_rate_fn = keras.optimizers.schedules.PiecewiseConstantDecay(boundaries, values)
         optimizer = keras.optimizers.Adam(learning_rate=learning_rate_fn, epsilon=1e-6)
         # define callback
-        tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=self.log_path, histogram_freq=1, profile_batch=10)
+        tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=self.log_path, histogram_freq=1)
         earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=10)
-        earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=10)
+        # earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=10)
         best_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
             filepath=self.model_path,
-            save_weights_only=True,
+            save_weights_only=False,
             monitor='loss',
             mode='min',
             save_best_only=True,
@@ -200,9 +200,28 @@ class CSDIImputer:
         else:
             validation_data = None
         self.model.compile(optimizer=optimizer)
-
+        pre_run_data = series[:self.batch_size]
+        pre_run_data = TrainDataset(pre_run_data, missing_ratio_or_k=0.1, masking='rm')
+        pre_run_data = self.process_data(pre_run_data)
+        print('=='*10 + 'Pre Train' + '=='*10)
+        self.model.fit(x=pre_run_data, batch_size=self.batch_size, epochs=1)
+        print('==' * 10 + 'Pre Train' + '==' * 10)
+        self.model.built = True
+        self.model.embed_layer.built = True
+        self.model.diffmodel.built = True
+        self.model.diffmodel.diffusion_embedding.built = True
+        for i in range(len(self.model.diffmodel.residual_layers)):
+            self.model.diffmodel.residual_layers[i].built = True
+        self.model.summary()
         # Visualize the training progress of the model.
+        input_signature = ((tf.TensorSpec([None, 14, 100], tf.float32),
+                             tf.TensorSpec([None, 14, 100], tf.float32),
+                             tf.TensorSpec([None, 14, 100], tf.float32),
+                             tf.TensorSpec([None, 14, 100], tf.float32)),)
+        # self.model.compute_output_shape(input_shape=(((None, 14, 100), (None, 14, 100),(None, 14, 100),(None, 14, 100)),))
+        # self.model._set_inputs(inputs=input_signature, outputs=None)
         if not infer_flag:
+            # self.model.compile(optimizer=optimizer)
             history = self.model.fit(x=train_data, batch_size=self.batch_size, epochs=self.epochs,
                                      validation_data=(validation_data,),
                                      callbacks=[tensorboard_callback,
@@ -221,8 +240,11 @@ class CSDIImputer:
         self.model.embed_layer.built = True
         self.model.diffmodel.built = True
         self.model.diffmodel.diffusion_embedding.built = True
-        for i in range(len(self.model.diffmodel.residual_block)):
-            self.model.diffmodel.residual_block[i].built = True
+        for i in range(len(self.model.diffmodel.residual_layers)):
+            self.model.diffmodel.residual_layers[i].built = True
+        self.model.summary()
+        self.model.save(self.model_path)
+
         return train_data, validation_data # ,history
 
     def process_data(self, train_data):
@@ -311,72 +333,55 @@ class CSDIImputer:
         mae_total = 0
         evalpoints_total = 0
 
+
+
+
         # all_target = tf.TensorArray(dtype=tf.float32, size=int(sample.shape[0]/self.batch_size))
         # all_observed_point = tf.TensorArray(dtype=tf.float32, size=int(sample.shape[0]/self.batch_size))
         # all_observed_time = tf.TensorArray(dtype=tf.int32, size=int(sample.shape[0]/self.batch_size))
         # all_evalpoint = tf.TensorArray(dtype=tf.float32, size=int(sample.shape[0]/self.batch_size))
         # all_generated_samples = tf.TensorArray(dtype=tf.float32, size=int(sample.shape[0]/self.batch_size))
 
-        @tf.function
-        def single_batch_imputer(test_batch):
+        # @tf.function
+        # def single_batch_imputer(test_batch):
             # test_batch = (test_d, test_ob_m, test_gt_m)
             # observed_data, observed_mask, gt_mask
-            samples, c_target, eval_points, observed_points, observed_time = self.model.impute(test_batch,
-                                                                                               self.n_samples)
-            # samples: n_samples B K L
-            # samples = rearrange(samples, 'i j k l -> j i l k')  # (B,nsample,L,K)
-            c_target = rearrange(c_target, 'i j k -> i k j')  # (B,L,K)
-            eval_points = rearrange(eval_points, 'i j k -> i k j')
+            # samples, c_target, eval_points, observed_points, observed_time = self.model.impute(test_batch,
+            #                                                                                    self.n_samples)
+            # # samples: n_samples B K L
+            # # samples = rearrange(samples, 'i j k l -> j i l k')  # (B,nsample,L,K)
+            # c_target = rearrange(c_target, 'i j k -> i k j')  # (B,L,K)
+            # eval_points = rearrange(eval_points, 'i j k -> i k j')
+            #
+            # samples_median = rearrange(tfp.stats.percentile(samples, 50., axis=0), 'i j k -> i k j')  # B K L -> B L K
+            #
+            # mse_current = (((samples_median - c_target) * eval_points) ** 2)
+            # mae_current = (tf.abs((samples_median - c_target) * eval_points))
 
-            samples_median = rearrange(tfp.stats.percentile(samples, 50., axis=0), 'i j k -> i k j')  # B K L -> B L K
+            # return samples #, tf.reduce_sum(mse_current), tf.reduce_sum(mae_current), tf.reduce_sum(eval_points)
 
-            mse_current = (((samples_median - c_target) * eval_points) ** 2)
-            mae_current = (tf.abs((samples_median - c_target) * eval_points))
-
-            return samples #, tf.reduce_sum(mse_current), tf.reduce_sum(mae_current), tf.reduce_sum(eval_points)
-
-        all_generated_samples = tf.stop_gradient(
-                tf.map_fn(fn = single_batch_imputer, elems=(test_data, test_ob_masks, test_gt_masks),
-                            fn_output_signature=tf.TensorSpec(shape=[n_samples,B, K, L], dtype=tf.float32),
-                                                # tf.TensorSpec(shape=(), dtype=tf.float32),
-                                                # tf.TensorSpec(shape=(), dtype=tf.float32),
-                                                # tf.TensorSpec(shape=(), dtype=tf.float32)),
-                            parallel_iterations=50,
-                      )
-        )
-
+        # all_generated_samples = tf.stop_gradient(
+        #         tf.map_fn(fn = single_batch_imputer, elems=(test_data, test_ob_masks, test_gt_masks),
+        #                     fn_output_signature=tf.TensorSpec(shape=[n_samples,B, K, L], dtype=tf.float32),
+        #                                         # tf.TensorSpec(shape=(), dtype=tf.float32),
+        #                                         # tf.TensorSpec(shape=(), dtype=tf.float32),
+        #                                         # tf.TensorSpec(shape=(), dtype=tf.float32)),
+        #                     parallel_iterations=50,
+        #               )
+        # )
+        all_generated_samples = []
         # all_start_time = time.time()
-        # for i in range(int(sample.shape[0]/self.batch_size)):
-        #     test_batch = (test_data[i], test_ob_masks[i], test_gt_masks[i])
-        #     # observed_data, observed_mask, gt_mask
-        #     ite_start_time = time.time()
-        #     samples, c_target, eval_points, observed_points, observed_time = self.model.impute(test_batch, self.n_samples)
-        #     # samples: n_samples B K L
-        #     ite_end_time = time.time()
-        #     print('Ite-{} uses {} s'.format(i, int(ite_end_time - ite_start_time)))
-        #     # samples = rearrange(samples, 'i j k l -> j i l k')  # (B,nsample,L,K)
-        #     c_target = rearrange(c_target, 'i j k -> i k j')  # (B,L,K)
-        #     # c_target = c_target.permute(0, 2, 1)
-        #     eval_points = rearrange(eval_points, 'i j k -> i k j')
-        #     # eval_points = eval_points.permute(0, 2, 1)
-        #     # observed_points = rearrange(observed_points, 'i j k -> i k j')
-        #     # observed_points = observed_points.permute(0, 2, 1)
-        #
-        #     samples_median = rearrange(tfp.stats.percentile(samples, 50., axis=0), 'i j k -> i k j') # B K L -> B L K
-        #     # all_target.write(i, c_target)
-        #     # all_evalpoint.write(i, eval_points)
-        #     # all_observed_point.write(i, observed_points)
-        #     # all_observed_time.write(i, observed_time)
-        #     all_generated_samples = all_generated_samples.write(i, samples)
-        #
-        #     mse_current = (((samples_median - c_target) * eval_points) ** 2)
-        #     mae_current = (tf.abs((samples_median - c_target) * eval_points))
-        #
-        #     mse_total += tf.reduce_sum(mse_current)
-        #     mae_total += tf.reduce_sum(mae_current)
-        #     evalpoints_total += tf.reduce_sum(eval_points)
-        # all_end_time = time.time()
-        # print("Total imputation uses time {} s".format(int(all_end_time - all_start_time)))
+        i = 0
+        pbar = tqdm(total=sample.shape[0]/self.batch_size)
+        while i < int(sample.shape[0]/self.batch_size):
+            test_batch = (test_data[i], test_ob_masks[i], test_gt_masks[i])
+            # observed_data, observed_mask, gt_mask
+            samples, _, _, _, _ = self.model.impute(test_batch, self.n_samples)
+            # samples: n_samples B K L
+            all_generated_samples.append(samples)
+            i += 1
+            if i % 5 == 0 and i > 0:
+                pbar.update(5)
 
-        return all_generated_samples #, mse_total, mae_total, evalpoints_total
+        return tf.stack(all_generated_samples) #, mse_total, mae_total, evalpoints_total
 

@@ -188,7 +188,7 @@ def swish(x):
     return x * keras.activations.sigmoid(x)
 
 
-class DiffusionEmbedding(keras.Model):
+class DiffusionEmbedding(keras.layers.Layer):
     def __init__(self, num_steps, embedding_dim=128, projection_dim=None):
         super().__init__()
         if projection_dim is None:
@@ -198,6 +198,7 @@ class DiffusionEmbedding(keras.Model):
         self.projection.add(keras.layers.Dense(projection_dim, activation=swish))
         self.projection.add(keras.layers.Dense(projection_dim, activation=swish))
 
+    # @tf.function
     def call(self, t, training=True):
         x = tf.gather(self.embedding, t)
         x = self.projection(x)
@@ -212,7 +213,7 @@ class DiffusionEmbedding(keras.Model):
         return table
 
 
-class diff_CSDI(keras.Model):
+class diff_CSDI(keras.layers.Layer):
     def __init__(self, config, inputdim=2):
         super().__init__()
         self.channels = config["channels"]
@@ -238,19 +239,22 @@ class diff_CSDI(keras.Model):
                     time_layer=config['time_layer']
                 )
             )
-
-    @tf.function
-    def __call__(self, x, cond_info, t, training=True):
+    #
+    # @tf.function(input_signature=[(tf.TensorSpec([None,2, 14, 100], tf.float32),
+    #                                tf.TensorSpec([None, 145, 14, 100], tf.float32),
+    #                                tf.TensorSpec([None], tf.int32))])
+    def call(self, batch):
+        x, cond_info, t = batch
         B, inputdim, K, L = x.shape
-        x = rearrange(x, 'b d k l -> b d (k l)')
-        # x = tf.reshape(x, [B, inputdim, K * L])
+        x = rearrange(x, 'b d k l -> b d (k l)') # 64 2 14 100 -> 64 2 1400
+
         x = self.input_projection(x)
         x = rearrange(x, 'b c (k l) -> b c k l', k=K) # B channels K L
-        diffusion_emb = self.diffusion_embedding.call(t, training=training)
+        diffusion_emb = self.diffusion_embedding.call(t)
 
         skip = tf.TensorArray(dtype=tf.float32, size=len(self.residual_layers))
         for i, layer in enumerate(self.residual_layers):
-            x, skip_connection = layer.call(x, cond_info, diffusion_emb, training=training)
+            x, skip_connection = layer.call((x, cond_info, diffusion_emb))
             skip = skip.write(i, skip_connection) #.mark_used() #
 
         x = tf.reduce_sum(skip.stack(), axis=0) / tf.math.sqrt(float(len(self.residual_layers)))
@@ -263,7 +267,7 @@ class diff_CSDI(keras.Model):
         return x
 
 
-class ResidualBlock(keras.Model):
+class ResidualBlock(keras.layers.Layer):
     def __init__(self, side_dim, channels, diffusion_embedding_dim, nheads, time_layer='transformer'):
         super().__init__()
         self.time_layer_type=time_layer
@@ -272,16 +276,18 @@ class ResidualBlock(keras.Model):
         self.mid_projection = Conv1d_with_init(channels, 2 * channels, 1)
         self.output_projection = Conv1d_with_init(channels, 2 * channels, 1)
 
-        self.time_layer = keras.Sequential()
+
         if time_layer=='transformer':
+            self.time_layer = keras.Sequential()
             self.time_layer.add(keras.layers.Input((None, channels)))
             self.time_layer.add(tfm.nlp.models.TransformerEncoder(num_layers=1,
                                             num_attention_heads=nheads,
                                             intermediate_size=64,
                                             activation='gelu',)) # (batch_size, input_length, hidden_size)
         else:
+            # TODO determine S4 input shape
             # self.time_layer.add(keras.layers.Input((channels, None)))
-            self.time_layer.add(S4Layer(features=channels, lmax=100))
+            self.time_layer = S4Layer(features=channels, lmax=100)
         self.feature_layer = keras.Sequential()
         self.feature_layer.add(keras.layers.Input((None, channels)))
         self.feature_layer.add(tfm.nlp.models.TransformerEncoder(num_layers=1,
@@ -289,7 +295,7 @@ class ResidualBlock(keras.Model):
                                             intermediate_size=64,
                                             activation='gelu',)) # (batch_size, input_length, hidden_size)
 
-    def forward_time(self, y, base_shape, training=True):
+    def forward_time(self, y, base_shape):
         B, channel, K, L = base_shape
         if L == 1:
             return y
@@ -300,13 +306,13 @@ class ResidualBlock(keras.Model):
             y = rearrange(y, '(b k) l c -> b (k l) c', k=K) # transpose to b k l c
             y = rearrange(y, 'b (k l) c -> b c (k l)', k=K)  # b c (k l)
         else:
-            y = rearrange(y, ' b k c l -> (b k) c l')
-            y = self.time_layer(y)  # bk, c, l -> bk, l, c
+            y = rearrange(y, ' b k c l -> (b k) c l') # batch feature length
+            y = self.time_layer.call(y)  # bk, c, l -> bk, l, c
             y = rearrange(y, '(b k) l c -> b c (k l)', k=K)  # b c k l
 
         return y
 
-    def forward_feature(self, y, base_shape, training=True):
+    def forward_feature(self, y, base_shape):
         B, channel, K, L = base_shape
 
         if K == 1:
@@ -319,8 +325,9 @@ class ResidualBlock(keras.Model):
         y = rearrange(y, ' b l k c -> b c (k l)', l=L)
         return y
 
-    @tf.function
-    def call(self, x, cond_info, diffusion_emb, training=True):
+    # @tf.function
+    def call(self, batch):
+        x, cond_info, diffusion_emb = batch
         B, channel, K, L = x.shape
         _, cond_dim, _, _ = cond_info.shape
         base_shape = x.shape
@@ -330,8 +337,8 @@ class ResidualBlock(keras.Model):
         diffusion_emb = tf.expand_dims(diffusion_emb, -1)  # (B,channel,1)
         y = x + diffusion_emb
 
-        y = self.forward_time(y, base_shape, training=training)
-        y = self.forward_feature(y, base_shape, training=training)  # (B,channel,K*L)
+        y = self.forward_time(y, base_shape)
+        y = self.forward_feature(y, base_shape)  # (B,channel,K*L)
         y = self.mid_projection(y)  # (B,channel,K*L) -> (B,2*channel,K*L)
 
         cond_info = rearrange(cond_info, '... k l -> ... (k l)')

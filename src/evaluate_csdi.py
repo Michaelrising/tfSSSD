@@ -8,7 +8,7 @@ if __name__ == "__main__":
 
     # current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_loc', type=str, default='20230105-151317', help='The location of the log file')
+    parser.add_argument('--model_loc', type=str, default='20230106-173320', help='The location of the log file')
     parser.add_argument('--algo', type=str, default='transformer', help='The Algorithm for imputation: transformer or S4')
     parser.add_argument('--data', type=str, default='mujoco', help='The data set for training')
     parser.add_argument('--cuda', type=int, default=0, help='The CUDA device for training')
@@ -33,7 +33,7 @@ if __name__ == "__main__":
     CSDIImputer = CSDIImputer(model_path, log_path, config_path, algo=args.algo)
     _, _ = CSDIImputer.train(training_data, infer_flag=True)
 
-    CSDIImputer.model.load_weights(CSDIImputer.model_path)#.expect_partial()
+    CSDIImputer.model.load_weights(model_path)#.expect_partial()
 
     imputed_data = CSDIImputer.imputer(sample=observed_data, gt_mask=gt_mask, ob_masks=ob_mask, n_samples=5)
     # imputations = imputed_data.stack()  # int(sample.shape[0]/self.batch_size) * n_samples * B * K * L

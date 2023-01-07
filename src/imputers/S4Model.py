@@ -352,14 +352,18 @@ def nplr(measure, N, rank=1, dtype=tf.float32):
     # V_inv = tf.math.conj(V) #.transpose(-1, -2)
     V_inv = tf.transpose(V, perm = [1, 0], conjugate=True)
 
-    real_V_inv = tf.math.real(V_inv)
-    imag_V_inv = tf.math.imag(V_inv)
-    B_real = tf.einsum('ij, j -> i', real_V_inv, B) # V^* B
-    B_imag = tf.einsum('ij, j -> i', imag_V_inv, B)
-    B = tf.cast(tf.complex(B_real, B_imag), dtype=V_inv.dtype)
-    P_real = tf.einsum('ij, ...j -> ...i', real_V_inv, P) # V^* P
-    P_imag = tf.einsum('ij, ...j -> ...i', imag_V_inv, P)
-    P = tf.cast(tf.complex(P_real, P_imag), dtype=V_inv.dtype)
+    # real_V_inv = tf.math.real(V_inv)
+    # imag_V_inv = tf.math.imag(V_inv)
+    # B_real = tf.einsum('ij, j -> i', real_V_inv, B) # V^* B
+    # B_imag = tf.einsum('ij, j -> i', imag_V_inv, B)
+    # B = tf.cast(tf.complex(B_real, B_imag), dtype=V_inv.dtype)
+    # P_real = tf.einsum('ij, ...j -> i', real_V_inv, P) # V^* P
+    # P_imag = tf.einsum('ij, ...j -> ...i', imag_V_inv, P)
+    # P = tf.cast(tf.complex(P_real, P_imag), dtype=V_inv.dtype)
+
+    B = tf.matmul(V, tf.expand_dims(tf.complex(B, tf.zeros_like(B)), 1), adjoint_a=True)
+    B = tf.squeeze(B) # (N/2, )
+    P = tf.matmul(tf.complex(P, tf.zeros_like(P)), tf.math.conj(V))
 
     return w, P, B, V
 
@@ -387,7 +391,7 @@ def bilinear(dt, A, B=None):
     return dA, dB
 
 
-class SSKernelNPLR(keras.Model):
+class SSKernelNPLR(keras.layers.Layer):
     """Stores a representation of and computes the SSKernel function K_L(A^dt, B^dt, C) corresponding to a discretized state space, where A is Normal + Low Rank (NPLR)
 
     The class name stands for 'State-Space SSKernel for Normal Plus Low-Rank'.
@@ -421,8 +425,7 @@ class SSKernelNPLR(keras.Model):
         if double_length: prod = -prod # Multiply by I + dA_L instead
         C_ = C_ - prod
         C_ = C_[..., :self.N] # Take conjugate pairs again
-        # self.C.copy_(_c2r(C_))
-        self.C = tf.stop_gradient(tf.identity(_c2r(C_)))
+        self.C.assign(tf.identity(_c2r(C_)))
 
         if double_length:
             self.L *= 2
@@ -436,8 +439,8 @@ class SSKernelNPLR(keras.Model):
         omega = tf.constant(omega, dtype=dtype)  # \omega_{2L}
         z = 2 * (1 - omega) / (1 + omega)
         if cache:
-            setattr(self, 'omega', tf.stop_gradient(tf.Variable(_c2r(omega), name='omega', trainable=False)))
-            setattr(self, 'z', tf.stop_gradient(tf.Variable(_c2r(z), name='z', trainable=False)))
+            setattr(self, 'omega', tf.Variable(_c2r(omega), name='omega', trainable=False))
+            setattr(self, 'z', tf.Variable(_c2r(z), name='z', trainable=False))
         return omega, z
 
     def __init__(
@@ -499,7 +502,7 @@ class SSKernelNPLR(keras.Model):
         # C is a regular parameter, not state
         # self.C = nn.Parameter(_c2r(C.conj().resolve_conj()))
         # self.C = nn.Parameter(_c2r(_resolve_conj(C)))
-        self.C = tf.Variable(_c2r(_resolve_conj(C)))
+        self.C = tf.Variable(_c2r(tf.math.conj(C)))
         train = False
         if trainable is None: trainable = {}
         if trainable == False: trainable = {}
@@ -516,7 +519,7 @@ class SSKernelNPLR(keras.Model):
         else:
             self.register("w", _c2r(w), trainable.get('A', train), lr, 0.0)
             # self.register("Q", _c2r(P.clone().conj().resolve_conj()), trainable.get('P', train), lr, 0.0)
-            Q = _resolve_conj(tf.identity(P))
+            Q = tf.math.conj(tf.identity(P))
             self.register("Q", _c2r(Q), trainable.get('P', train), lr, 0.0)
 
         if length_correction:
@@ -872,7 +875,7 @@ class SSKernelNPLR(keras.Model):
             setattr(getattr(self, name), "_optim", optim)
 
 
-class HippoSSKernel(keras.Model):
+class HippoSSKernel(keras.layers.Layer):
     """Wrapper around SSKernel that generates A, B, C, dt according to HiPPO arguments.
 
     The SSKernel is expected to support the interface
@@ -958,7 +961,7 @@ def get_tf_trans(heads=8, layers=1, channels=64):
     return keras.Model(encoder_inputs, outputs, name="encoder")
 
 
-class S4(keras.Model):
+class S4(keras.layers.Layer):
 
     def __init__(
             self,
@@ -994,7 +997,6 @@ class S4(keras.Model):
         """
 
         super().__init__()
-        # TODO logger
         # if verbose:
         #     import src.utils.train
         #     log = src.utils.train.get_logger(__name__)
@@ -1037,6 +1039,7 @@ class S4(keras.Model):
             weight_norm=weight_norm,
         )
 
+    # @tf.function
     def call(self, u, **kwargs):  # absorbs return_output and transformer src mask
         """
         u: (B H L) if self.transposed else (B L H)
@@ -1130,8 +1133,9 @@ class S4Layer(keras.Model):
         self.norm_layer = keras.layers.LayerNormalization(axis=-1) if layer_norm else tf.identity
         self.dropout = keras.layers.SpatialDropout1D(dropout) if dropout > 0 else tf.identity
 
+    # @tf.function
     def call(self, x):
-        # x has shape # batch, seq, feature
+        # x has shape # batch, feature, seq
         # x = tf.transpose(x, perm=[1, 2, 0])  (as expected from S4 with transposed=True)
         xout, _ = self.s4_layer.call(x)  # batch, feature,  seq,
         xout = self.dropout(tf.transpose(xout, perm=[0,2,1]))
