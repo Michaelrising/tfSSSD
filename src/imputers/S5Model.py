@@ -1,5 +1,7 @@
 import tensorflow as tf
 from functools import partial
+import tensorflow_probability as tfp
+from tensorflow import keras
 
 def make_HiPPO(N):
     """ Create a HiPPO-LegS matrix.
@@ -60,9 +62,9 @@ def make_DPLR_HiPPO(N):
     # Diagonalize S to V \Lambda V^*
     Lambda_imag, V = tf.linalg.eigvals(S * -1j)
 
-    P = tf.transpose(V, conjugate=True) @ P
+    P = tf.math.conj(V) @ P
     B_orig = B
-    B = tf.transpose(V, conjugate=True) @ B
+    B = tf.math.conj(V) @ B
     return Lambda_real + 1j * Lambda_imag, P, B, V, B_orig
 
 
@@ -78,12 +80,12 @@ def log_step_initializer(dt_min=0.001, dt_max=0.1):
     def init(key, shape):
         """ Init function
              Args:
-                 key: jax random key
+                 key: random key
                  shape tuple: desired shape
              Returns:
                  sampled log_step (float32)
          """
-        return tf.random.uniform(key, shape) * (
+        return tf.random.uniform(shape, seed=key) * (
             tf.math.log(dt_max) - tf.math.log(dt_min)
         ) + tf.math.log(dt_min)
 
@@ -93,7 +95,7 @@ def log_step_initializer(dt_min=0.001, dt_max=0.1):
 def init_log_steps(key, input):
     """ Initialize an array of learnable timescale parameters
          Args:
-             key: jax random key
+             key: random key
              input: tuple containing the array shape H and
                     dt_min and dt_max
          Returns:
@@ -102,11 +104,12 @@ def init_log_steps(key, input):
     H, dt_min, dt_max = input
     log_steps = []
     for i in range(H):
-        key, skey = random.split(key)
+        key, skey = tf.random.split(key)
         log_step = log_step_initializer(dt_min=dt_min, dt_max=dt_max)(skey, shape=(1,))
         log_steps.append(log_step)
+    log_step = tf.Variable(tf.stack(log_steps))
 
-    return np.array(log_steps)
+    return log_step
 
 
 def init_VinvB(init_fun, rng, shape, Vinv):
@@ -121,7 +124,7 @@ def init_VinvB(init_fun, rng, shape, Vinv):
          Returns:
              B_tilde (complex64) of shape (P,H,2)
      """
-    B = init_fun(rng, shape)
+    B = init_fun(shape, seed=rng)
     VinvB = Vinv @ B
     VinvB_real = tf.math.real(VinvB)
     VinvB_imag = tf.math.imag(VinvB)
@@ -131,7 +134,7 @@ def init_VinvB(init_fun, rng, shape, Vinv):
 def trunc_standard_normal(key, shape):
     """ Sample C with a truncated normal distribution with standard deviation 1.
          Args:
-             key: jax random key
+             key: random key
              shape (tuple): desired shape, of length 3, (H,P,_)
          Returns:
              sampled C matrix (float32) of shape (H,P,2) (for complex parameterization)
@@ -139,10 +142,10 @@ def trunc_standard_normal(key, shape):
     H, P, _ = shape
     Cs = []
     for i in range(H):
-        key, skey = random.split(key)
-        C = lecun_normal()(skey, shape=(1, P, 2))
+        key, skey = tf.random.split(key)
+        C = tf.random.truncated_normal(shape=(1, P, 2), seed=skey)
         Cs.append(C)
-    return np.array(Cs)[:, 0]
+    return tf.stack(Cs)[:, 0]
 
 
 def init_CV(init_fun, rng, shape, V):
@@ -157,14 +160,14 @@ def init_CV(init_fun, rng, shape, V):
          Returns:
              C_tilde (complex64) of shape (H,P,2)
      """
-    C_ = init_fun(rng, shape)
+    C_ = init_fun(shape=shape, seed=rng)
     C = C_[..., 0] + 1j * C_[..., 1]
     CV = C @ V
     CV_real = tf.math.real(CV)
     CV_imag = tf.math.imag(CV)
     return tf.concat((tf.expand_dims(CV_real, -1), tf.expand_dims(CV_imag, -1)), axis=-1)
 
-# TODO done here today
+
 # Discretization functions
 def discretize_bilinear(Lambda, B_tilde, Delta):
     """ Discretize a diagonalized, continuous-time linear SSM
@@ -176,11 +179,13 @@ def discretize_bilinear(Lambda, B_tilde, Delta):
         Returns:
             discretized Lambda_bar (complex64), B_bar (complex64)  (P,), (P,H)
     """
-    Identity = np.ones(Lambda.shape[0])
+    Identity = tf.ones(Lambda.shape[0])
 
     BL = 1 / (Identity - (Delta / 2.0) * Lambda)
     Lambda_bar = BL * (Identity + (Delta / 2.0) * Lambda)
     B_bar = (BL * Delta)[..., None] * B_tilde
+    Lambda_bar = tf.Variable(Lambda_bar, trainable=True, name='Lambda_bar')
+    B_bar = tf.Variable(B_bar, trainable=True, name='B_bar')
     return Lambda_bar, B_bar
 
 
@@ -194,14 +199,16 @@ def discretize_zoh(Lambda, B_tilde, Delta):
         Returns:
             discretized Lambda_bar (complex64), B_bar (complex64)  (P,), (P,H)
     """
-    Identity = np.ones(Lambda.shape[0])
-    Lambda_bar = np.exp(Lambda * Delta)
-    B_bar = (1/Lambda * (Lambda_bar-Identity))[..., None] * B_tilde
+    Identity = tf.ones(Lambda.shape[0])
+    Lambda_bar = tf.math.exp(Lambda * Delta)
+    B_bar = (1/Lambda * (Lambda_bar - Identity))[..., None] * B_tilde
+    Lambda_bar = tf.Variable(Lambda_bar, trainable=True, name='Lambda_bar')
+    B_bar = tf.Variable(B_bar, trainable=True, name='B_bar')
     return Lambda_bar, B_bar
 
 
 # Parallel scan operations
-@jax.vmap
+# @jax.vmap
 def binary_operator(q_i, q_j):
     """ Binary operator for parallel scan of linear recurrence. Assumes a diagonal matrix A.
         Args:
@@ -228,40 +235,57 @@ def apply_ssm(Lambda_bar, B_bar, C_tilde, input_sequence, conj_sym, bidirectiona
         Returns:
             ys (float32): the SSM outputs (S5 layer preactivations)      (L, H)
     """
-    Lambda_elements = Lambda_bar * np.ones((input_sequence.shape[0],
+    Lambda_elements = Lambda_bar * tf.ones((input_sequence.shape[0],
                                             Lambda_bar.shape[0]))
-    Bu_elements = jax.vmap(lambda u: B_bar @ u)(input_sequence)
+    Bu_elements = tf.function(lambda u: B_bar @ u)(input_sequence) # TODO jax.vmap to tensorflow what??
 
-    _, xs = jax.lax.associative_scan(binary_operator, (Lambda_elements, Bu_elements))
+    # TODO scan associate reverse
+    # _, xs = tfp.math.scan_associative(fn=binary_operator, elems=[Lambda_elements, Bu_elements])
+    _, xs = tf.scan(tf.vectorized_map(binary_operator), [Lambda_elements, Bu_elements])
 
     if bidirectional:
-        _, xs2 = jax.lax.associative_scan(binary_operator,
-                                          (Lambda_elements, Bu_elements),
-                                          reverse=True)
-        xs = np.concatenate((xs, xs2), axis=-1)
+        # _, xs2 = tfp.math.scan_associative(binary_operator,
+        #                                   [Lambda_elements, Bu_elements]) # reverse=True
+        _, xs2 = tf.scan(tf.vectorized_map(binary_operator), [Lambda_elements, Bu_elements], reverse=True)
+
+        xs = tf.concat((xs, xs2), axis=-1)
 
     if conj_sym:
-        return jax.vmap(lambda x: 2*(C_tilde @ x).real)(xs)
+        return tf.vectorized_map(lambda x: 2*(C_tilde @ x).real)(xs)
     else:
-        return jax.vmap(lambda x: (C_tilde @ x).real)(xs)
+        return tf.vectorized_map(lambda x: (C_tilde @ x).real)(xs)
 
 
-class S5SSM(nn.Module):
-    Lambda_re_init: np.DeviceArray
-    Lambda_im_init: np.DeviceArray
-    V: np.DeviceArray
-    Vinv: np.DeviceArray
+class S5Layer(keras.Model):
 
-    H: int
-    P: int
-    C_init: str
-    discretization: str
-    dt_min: float
-    dt_max: float
-    conj_sym: bool = True
-    clip_eigs: bool = False
-    bidirectional: bool = False
-    step_rescale: float = 1.0
+    def __init__(self,
+                ssm_size,
+                blocks,
+                H=14,
+                discretization='zoh',
+                C_init='trunc_standard_normal',
+                dt_min=0.001,
+                dt_max=0.1,
+                conj_sym = True,
+                clip_eigs = False,
+                bidirectional = False,
+                step_rescale = 1.0,
+        ):
+        super().__init__()
+        self.ssm_size = ssm_size
+        self.blocks = blocks
+        self.H = H
+        self.P = ssm_size
+        self.C_init = C_init
+        self.discretization = discretization
+        self.dt_min = dt_min
+        self.dt_max = dt_max
+        self.conj_sym = conj_sym
+        self.clip_eigs = clip_eigs
+        self.bidirectional = bidirectional
+        self.step_rescale = step_rescale
+        self.init_set_up()
+        self.setup()
 
     """ The S5 SSM
         Args:
@@ -306,85 +330,116 @@ class S5SSM(nn.Module):
         else:
             local_P = self.P
 
+        # TODO initialize parameters here but some are not trainable
         # Initialize diagonal state to state matrix Lambda (eigenvalues)
-        self.Lambda_re = self.param("Lambda_re", lambda rng, shape: self.Lambda_re_init, (None,))
-        self.Lambda_im = self.param("Lambda_im", lambda rng, shape: self.Lambda_im_init, (None,))
-        if self.clip_eigs:
-            self.Lambda = np.clip(self.Lambda_re, None, -1e-4) + 1j * self.Lambda_im
-        else:
-            self.Lambda = self.Lambda_re + 1j * self.Lambda_im
+        # self.Lambda_re = self.param("Lambda_re", lambda rng, shape: self.Lambda_re_init, (None,))
+        # self.Lambda_im = self.param("Lambda_im", lambda rng, shape: self.Lambda_im_init, (None,))
 
+        self.Lambda_re = tf.Variable(self.Lambda_re_init, trainable=True, name="Lambda_re")
+        self.Lambda_im = tf.Variable(self.Lambda_im_init, trainable=True, name="Lambda_im")
+        if self.clip_eigs:
+            lambda_value = tf.complex(tf.clip_by_value(self.Lambda_re_init, None, -1e-4), self.Lambda_im_init)
+        else:
+            lambda_value = tf.complex(self.Lambda_re_init, self.Lambda_im_init)
+        self.Lambda = tf.Variable(lambda_value, trainable=True, name='Lambda', dtype=tf.complex64)
         # Initialize input to state (B) matrix
-        B_init = lecun_normal()
+        B_init = tf.random.truncated_normal()
         B_shape = (local_P, self.H)
-        self.B = self.param("B",
-                            lambda rng, shape: init_VinvB(B_init,
-                                                          rng,
-                                                          shape,
-                                                          self.Vinv),
-                            B_shape)
-        B_tilde = self.B[..., 0] + 1j * self.B[..., 1]
+        B_rng = tf.random.Generator.get_global_generator().make_seeds(count=1)
+        B = init_VinvB(B_init, B_rng, B_shape, self.Vinv)
+
+        self.B = tf.Variable(B, trainable=True, name='B')
+        B_tilde_value = tf.complex(B[..., 0], B[..., 1])
+        B_tilde = tf.Variable(B_tilde_value,  trainable=True, name='B_tilde')
 
         # Initialize state to output (C) matrix
         if self.C_init in ["trunc_standard_normal"]:
             C_init = trunc_standard_normal
-            C_shape = (self.H, local_P, 2)
         elif self.C_init in ["lecun_normal"]:
-            C_init = lecun_normal()
-            C_shape = (self.H, local_P, 2)
+            C_init = tf.random.truncated_normal
         elif self.C_init in ["complex_normal"]:
-            C_init = normal(stddev=0.5 ** 0.5)
+            C_init = tf.random.normal(stddev=0.5 ** 0.5)
         else:
             raise NotImplementedError(
                    "C_init method {} not implemented".format(self.C_init))
 
         if self.C_init in ["complex_normal"]:
             if self.bidirectional:
-                C = self.param("C", C_init, (self.H, 2 * self.P, 2))
-                self.C_tilde = C[..., 0] + 1j * C[..., 1]
-
+                C_shape = [self.H, 2 * self.P, 2]
             else:
-                C = self.param("C", C_init, (self.H, self.P, 2))
-                self.C_tilde = C[..., 0] + 1j * C[..., 1]
+                C_shape = [self.H, self.P, 2]
+            C = tf.random.normal(shape=C_shape, stddev=0.5 ** 0.5)
+            self.C = tf.Variable(C, trainable=True, name='C')
+            C_tilde = tf.complex(C[..., 0], C[..., 1])
+            self.C_tilde = tf.Variable(C_tilde, trainable=True, name='True')
 
         else:
+            C_shape = (self.H, self.P, 2)
             if self.bidirectional:
-                self.C1 = self.param("C1",
-                                     lambda rng, shape: init_CV(C_init, rng, shape, self.V),
-                                     C_shape)
-                self.C2 = self.param("C2",
-                                     lambda rng, shape: init_CV(C_init, rng, shape, self.V),
-                                     C_shape)
+                c1_rng = tf.random.Generator.get_global_generator().make_seeds(count=1)
+                c1 = init_CV(C_init, c1_rng, C_shape, self.V)
 
-                C1 = self.C1[..., 0] + 1j * self.C1[..., 1]
-                C2 = self.C2[..., 0] + 1j * self.C2[..., 1]
-                self.C_tilde = np.concatenate((C1, C2), axis=-1)
+                self.C1 = tf.Variable(c1, trainable=True, name='C1')
+                c2_rng = tf.random.Generator.get_global_generator().make_seeds(count=1)
+                c2 = init_CV(C_init, c2_rng, C_shape, self.V)
+                self.C1 = tf.Variable(c2, trainable=True, name='C1')
+
+                C1 = tf.complex(c1[..., 0], c1[..., 1])
+                C2 = tf.complex(c2[..., 0], c2[..., 1])
+                self.C_tilde = tf.Variable(tf.concat((C1, C2), axis=-1), trainable=True, name='C_tilde')
 
             else:
-                self.C = self.param("C",
-                                    lambda rng, shape: init_CV(C_init, rng, shape, self.V),
-                                    C_shape)
+                c_rng = tf.random.Generator.get_global_generator().make_seeds(count=1)
+                C = init_CV(C_init, c_rng, C_shape, self.V)
 
-                self.C_tilde = self.C[..., 0] + 1j * self.C[..., 1]
+                self.C = tf.Variable(C, trainable=True, name='C')
+
+                self.C_tilde = tf.Variable(tf.complex(C[..., 0], C[..., 1]), trainable=True, name='C_tilde')
 
         # Initialize feedthrough (D) matrix
-        self.D = self.param("D", normal(stddev=1.0), (self.H,))
+        self.D = tf.Variable(tf.random.normal(shape=(self.H,), stddev=1.0), trainable=True, name='D')
 
-        # Initialize learnable discretization timescale value
-        self.log_step = self.param("log_step",
-                                   init_log_steps,
-                                   (self.P, self.dt_min, self.dt_max))
-        step = self.step_rescale * np.exp(self.log_step[:, 0])
+        #TODO Initialize learnable discretization timescale value
+        rng_log_steps = tf.random.Generator.get_global_generator().make_seeds(count=1)
+        log_step = init_log_steps(key=rng_log_steps, input=(self.P, self.dt_min, self.dt_max))
+        self.log_step = tf.Variable(log_step, trainable=True, name='log_step')
+        step_value = self.step_rescale * tf.math.exp(log_step[:, 0])
+        step = tf.Variable(step_value, trainable=True, name='step')
 
         # Discretize
         if self.discretization in ["zoh"]:
-            self.Lambda_bar, self.B_bar = discretize_zoh(self.Lambda, B_tilde, step)
+            self.Lambda_bar, self.B_bar = discretize_zoh(lambda_value, B_tilde_value, step_value)
         elif self.discretization in ["bilinear"]:
-            self.Lambda_bar, self.B_bar = discretize_bilinear(self.Lambda, B_tilde, step)
+            self.Lambda_bar, self.B_bar = discretize_bilinear(lambda_value, B_tilde_value, step_value)
         else:
             raise NotImplementedError("Discretization method {} not implemented".format(self.discretization))
 
-    def __call__(self, input_sequence):
+    def init_set_up(self):
+        # determine the size of initial blocks
+        block_size = int(self.ssm_size / self.blocks)
+        # Initialize state matrix A using approximation to HiPPO-LegS matrix
+        Lambda, _, B, V, B_orig = make_DPLR_HiPPO(block_size)
+        if self.conj_sym:
+            block_size = block_size // 2
+            self.P = self.ssm_size // 2
+        Lambda = Lambda[:block_size]
+        V = V[:, :block_size]
+        # Vc = V.conj().T
+        Vc = tf.transpose(V, conjugate=True)
+
+        # If initializing state matrix A as block-diagonal, put HiPPO approximation
+        # on each block
+        Lambda = (Lambda * tf.ones((self.blocks, block_size))).ravel()
+        self.Lambda_re_init = tf.math.real(Lambda)
+        self.Lambda_im_init = tf.math.imag(Lambda)
+        self.V = tf.linalg.LinearOperatorBlockDiag(*([V] * self.blocks)) # TODO determine blog_diag
+        self.Vinv = tf.linalg.LinearOperatorBlockDiag(*([Vc] * self.blocks))
+
+        print("Lambda.shape={}".format(Lambda.shape))
+        print("V.shape={}".format(self.V.shape))
+        print("Vinv.shape={}".format(self.Vinv.shape))
+
+    def call(self, input_sequence):
         """
         Compute the LxH output of the S5 SSM given an LxH input sequence
         using a parallel scan.
@@ -401,38 +456,6 @@ class S5SSM(nn.Module):
                        self.bidirectional)
 
         # Add feedthrough matrix output Du;
-        Du = jax.vmap(lambda u: self.D * u)(input_sequence)
+        Du =tf.vectorized_map(lambda u: self.D * u)(input_sequence)
         return ys + Du
-
-
-def init_S5SSM(H,
-               P,
-               Lambda_re_init,
-               Lambda_im_init,
-               V,
-               Vinv,
-               C_init,
-               discretization,
-               dt_min,
-               dt_max,
-               conj_sym,
-               clip_eigs,
-               bidirectional
-               ):
-    """Convenience function that will be used to initialize the SSM.
-       Same arguments as defined in S5SSM above."""
-    return partial(S5SSM,
-                   H=H,
-                   P=P,
-                   Lambda_re_init=Lambda_re_init,
-                   Lambda_im_init=Lambda_im_init,
-                   V=V,
-                   Vinv=Vinv,
-                   C_init=C_init,
-                   discretization=discretization,
-                   dt_min=dt_min,
-                   dt_max=dt_max,
-                   conj_sym=conj_sym,
-                   clip_eigs=clip_eigs,
-                   bidirectional=bidirectional)
 

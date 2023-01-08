@@ -172,8 +172,8 @@ class CSDIImputer:
         p1 = int(0.4 * self.epochs * series.shape[0] / self.batch_size)
         p2 = int(0.6 * self.epochs * series.shape[0] / self.batch_size)
         p3 = int(0.8 * self.epochs * series.shape[0] / self.batch_size)
-        boundaries = [p1, p2, p3]
-        values = [self.lr, self.lr * 0.1, self.lr * 0.1 * 0.1, self.lr * 0.1 * 0.1 * 0.1]
+        boundaries = [p1, p2]
+        values = [self.lr, self.lr * 0.1, self.lr * 0.1 * 0.1]
 
         learning_rate_fn = keras.optimizers.schedules.PiecewiseConstantDecay(boundaries, values)
         optimizer = keras.optimizers.Adam(learning_rate=learning_rate_fn, epsilon=1e-6)
@@ -206,26 +206,21 @@ class CSDIImputer:
         print('=='*10 + 'Pre Train' + '=='*10)
         self.model.fit(x=pre_run_data, batch_size=self.batch_size, epochs=1)
         print('==' * 10 + 'Pre Train' + '==' * 10)
-        self.model.built = True
-        self.model.embed_layer.built = True
-        self.model.diffmodel.built = True
-        self.model.diffmodel.diffusion_embedding.built = True
-        for i in range(len(self.model.diffmodel.residual_layers)):
-            self.model.diffmodel.residual_layers[i].built = True
+
+        self.model.built_after_run()
         self.model.summary()
         # Visualize the training progress of the model.
         input_signature = ((tf.TensorSpec([None, 14, 100], tf.float32),
                              tf.TensorSpec([None, 14, 100], tf.float32),
                              tf.TensorSpec([None, 14, 100], tf.float32),
                              tf.TensorSpec([None, 14, 100], tf.float32)),)
-        # self.model.compute_output_shape(input_shape=(((None, 14, 100), (None, 14, 100),(None, 14, 100),(None, 14, 100)),))
-        # self.model._set_inputs(inputs=input_signature, outputs=None)
+
         if not infer_flag:
-            # self.model.compile(optimizer=optimizer)
+            self.model.compile(optimizer=optimizer)
             history = self.model.fit(x=train_data, batch_size=self.batch_size, epochs=self.epochs,
                                      validation_data=(validation_data,),
                                      callbacks=[tensorboard_callback,
-                                                earlyStop_loss_callback,
+                                                # earlyStop_loss_callback,
                                                 best_checkpoint_callback
                                                 ])
             plt.plot(history.history["loss"], c='blue')
@@ -234,16 +229,6 @@ class CSDIImputer:
             plt.title("Loss")
             plt.savefig(self.log_path + '/loss.png')
             plt.show()
-        else:
-            self.model.fit(x=train_data, batch_size=self.batch_size, epochs=1)
-        self.model.built = True
-        self.model.embed_layer.built = True
-        self.model.diffmodel.built = True
-        self.model.diffmodel.diffusion_embedding.built = True
-        for i in range(len(self.model.diffmodel.residual_layers)):
-            self.model.diffmodel.residual_layers[i].built = True
-        self.model.summary()
-        self.model.save(self.model_path)
 
         return train_data, validation_data # ,history
 

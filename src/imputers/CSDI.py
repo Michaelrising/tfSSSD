@@ -16,6 +16,7 @@ class tfCSDI(keras.Model):
         self.emb_feature_dim = config["model"]["featureemb"]
         self.is_unconditional = config["model"]["is_unconditional"]
         self.target_strategy = config["model"]["target_strategy"]
+        self.algo = config['diffusion']['time_layer']
 
         self.emb_total_dim = self.emb_time_dim + self.emb_feature_dim
         if self.is_unconditional == False:
@@ -64,7 +65,7 @@ class tfCSDI(keras.Model):
         time_embed = tf.tile(time_embed, [1, 1, K, 1])  # B d_model K L
         # input to embed_layer is  self.target_dim, output is self.target_dim * self.emb_feature_dim (14 *16)
         # TODO: feature embedding has different results compared to torch version
-        feature_embed = tf.expand_dims(tf.expand_dims(self.embed_layer.__call__(tf.range(self.target_dim)), 0), 0)  # 1 * 1 * target_dim * embed_output_dim
+        feature_embed = tf.expand_dims(tf.expand_dims(self.embed_layer(tf.range(self.target_dim)), 0), 0)  # 1 * 1 * target_dim * embed_output_dim
         feature_embed = tf.tile(feature_embed, [tf.shape(cond_mask)[0], L, 1, 1])
         side_info = tf.concat([time_embed, feature_embed], axis=-1)  # (B,L,K,*)
         side_info = rearrange(side_info, 'i j k l -> i l k j')  # (B,*,K,L)
@@ -75,12 +76,12 @@ class tfCSDI(keras.Model):
 
         return side_info
 
-    # @tf.function
+    @tf.function
     def call(self, inputs):
         total_input, observed_tp, cond_mask, t = inputs
         side_info = self.get_side_info(observed_tp, cond_mask)
         diff_input_batch = (total_input, side_info, t)
-        predicted = self.diffmodel.call(diff_input_batch)  # (B,K,L) __call__
+        predicted = self.diffmodel(diff_input_batch)  # (B,K,L)
         return predicted
 
     def compute_loss(self, observed_data, cond_mask, observed_mask, observed_tp, is_train=True, set_t=-1):
@@ -98,7 +99,7 @@ class tfCSDI(keras.Model):
 
         # diff_input_batch = (total_input, side_info, t)
         # predicted = self.diffmodel.__call__(diff_input_batch, training=is_train)  # (B,K,L)
-        predicted = self.call((total_input, observed_tp, cond_mask, t)) # se
+        predicted = self((total_input, observed_tp, cond_mask, t)) # se
 
         target_mask = observed_mask - cond_mask
         residual = (noise - predicted) * target_mask
@@ -128,10 +129,16 @@ class tfCSDI(keras.Model):
         self.optimizer = optimizer
         self.loss_fn = self.compute_loss
 
-    # @tf.function(input_signature=[((tf.TensorSpec([None, 14, 100], tf.float32),
-    #                                 tf.TensorSpec([None, 14, 100], tf.float32),
-    #                                 tf.TensorSpec([None, 14, 100], tf.float32),
-    #                                 tf.TensorSpec([None, 14, 100], tf.float32)),)])
+    def built_after_run(self):
+        self.built = True
+        self.embed_layer.built = True
+        self.diffmodel.built = True
+        self.diffmodel.built_after_run()
+
+    @tf.function(input_signature=[((tf.TensorSpec([None, 14, 100], tf.float32),
+                                    tf.TensorSpec([None, 14, 100], tf.float32),
+                                    tf.TensorSpec([None, 14, 100], tf.float32),
+                                    tf.TensorSpec([None, 14, 100], tf.float32)),)])
     def train_step(self, batch):
         observed_data, observed_mask, _, cond_mask = batch[0]
         # observation mask denotes the original data missing, gt_masks is manmade mask
@@ -152,7 +159,7 @@ class tfCSDI(keras.Model):
         self.loss_tracker.update_state(loss)
         return {"loss": self.loss_tracker.result()}
 
-    # @tf.function
+    @tf.function
     def test_step(self, batch):
         observed_data, observed_mask, gt_mask, _ = batch[0]
         # observation mask denotes the original data missing, gt_masks is man-made mask
@@ -174,7 +181,7 @@ class tfCSDI(keras.Model):
         self.loss_tracker.update_state(val_loss)
         return {"loss": self.loss_tracker.result()}
 
-    # @tf.function
+    @tf.function
     def impute(self, batch, n_samples):
         observed_data, observed_mask, gt_mask = batch
         cond_mask = gt_mask

@@ -502,7 +502,7 @@ class SSKernelNPLR(keras.layers.Layer):
         # C is a regular parameter, not state
         # self.C = nn.Parameter(_c2r(C.conj().resolve_conj()))
         # self.C = nn.Parameter(_c2r(_resolve_conj(C)))
-        self.C = tf.Variable(_c2r(tf.math.conj(C)))
+        self.C = tf.Variable(_c2r(tf.math.conj(C)), name='C')
         train = False
         if trainable is None: trainable = {}
         if trainable == False: trainable = {}
@@ -1014,7 +1014,7 @@ class S4(keras.layers.Layer):
             channels *= 2
             self.hyper_activation = Activation(hyper_act)
 
-        self.D = tf.Variable(tf.random.normal(shape=[channels, self.h]))
+        self.D = tf.Variable(tf.random.normal(shape=[channels, self.h]), name='D')
 
         if self.bidirectional:
             channels *= 2
@@ -1039,7 +1039,7 @@ class S4(keras.layers.Layer):
             weight_norm=weight_norm,
         )
 
-    # @tf.function
+    @tf.function
     def call(self, u, **kwargs):  # absorbs return_output and transformer src mask
         """
         u: (B H L) if self.transposed else (B L H)
@@ -1133,7 +1133,7 @@ class S4Layer(keras.Model):
         self.norm_layer = keras.layers.LayerNormalization(axis=-1) if layer_norm else tf.identity
         self.dropout = keras.layers.SpatialDropout1D(dropout) if dropout > 0 else tf.identity
 
-    # @tf.function
+    @tf.function
     def call(self, x):
         # x has shape # batch, feature, seq
         # x = tf.transpose(x, perm=[1, 2, 0])  (as expected from S4 with transposed=True)
@@ -1141,4 +1141,11 @@ class S4Layer(keras.Model):
         xout = self.dropout(tf.transpose(xout, perm=[0,2,1]))
         xout = xout + tf.transpose(x, perm=[0,2,1])  # skip connection   # batch, seq, feature
         return self.norm_layer(xout) # apply normalization to features
+
+    def built_after_run(self):
+        self.built=True
+        self.s4_layer.built = True
+        self.s4_layer.kernel.built = True
+        self.s4_layer.kernel.kernel.built = True
+
 
