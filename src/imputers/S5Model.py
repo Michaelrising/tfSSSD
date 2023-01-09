@@ -107,12 +107,12 @@ def init_log_steps(key, input):
         key, skey = tf.random.split(key)
         log_step = log_step_initializer(dt_min=dt_min, dt_max=dt_max)(skey, shape=(1,))
         log_steps.append(log_step)
-    log_step = tf.Variable(tf.stack(log_steps))
+    log_step = tf.stack(log_steps)
 
     return log_step
 
 
-def init_VinvB(init_fun, rng, shape, Vinv):
+def init_VinvB(shape, Vinv):
     """ Initialize B_tilde=V^{-1}B. First samples B. Then compute V^{-1}B.
         Note we will parameterize this with two different matrices for complex
         numbers.
@@ -124,7 +124,7 @@ def init_VinvB(init_fun, rng, shape, Vinv):
          Returns:
              B_tilde (complex64) of shape (P,H,2)
      """
-    B = init_fun(shape, seed=rng)
+    B = tf.random.truncated_normal(shape)
     VinvB = Vinv @ B
     VinvB_real = tf.math.real(VinvB)
     VinvB_imag = tf.math.imag(VinvB)
@@ -148,7 +148,7 @@ def trunc_standard_normal(key, shape):
     return tf.stack(Cs)[:, 0]
 
 
-def init_CV(init_fun, rng, shape, V):
+def init_CV(init_fun, shape, V):
     """ Initialize C_tilde=CV. First sample C. Then compute CV.
         Note we will parameterize this with two different matrices for complex
         numbers.
@@ -160,7 +160,7 @@ def init_CV(init_fun, rng, shape, V):
          Returns:
              C_tilde (complex64) of shape (H,P,2)
      """
-    C_ = init_fun(shape=shape, seed=rng)
+    C_ = init_fun(shape=shape)
     C = C_[..., 0] + 1j * C_[..., 1]
     CV = C @ V
     CV_real = tf.math.real(CV)
@@ -184,8 +184,8 @@ def discretize_bilinear(Lambda, B_tilde, Delta):
     BL = 1 / (Identity - (Delta / 2.0) * Lambda)
     Lambda_bar = BL * (Identity + (Delta / 2.0) * Lambda)
     B_bar = (BL * Delta)[..., None] * B_tilde
-    Lambda_bar = tf.Variable(Lambda_bar, trainable=True, name='Lambda_bar')
-    B_bar = tf.Variable(B_bar, trainable=True, name='B_bar')
+    # Lambda_bar = tf.Variable(Lambda_bar, trainable=True, name='Lambda_bar')
+    # B_bar = tf.Variable(B_bar, trainable=True, name='B_bar')
     return Lambda_bar, B_bar
 
 
@@ -202,8 +202,8 @@ def discretize_zoh(Lambda, B_tilde, Delta):
     Identity = tf.ones(Lambda.shape[0])
     Lambda_bar = tf.math.exp(Lambda * Delta)
     B_bar = (1/Lambda * (Lambda_bar - Identity))[..., None] * B_tilde
-    Lambda_bar = tf.Variable(Lambda_bar, trainable=True, name='Lambda_bar')
-    B_bar = tf.Variable(B_bar, trainable=True, name='B_bar')
+    # Lambda_bar = tf.Variable(Lambda_bar, trainable=True, name='Lambda_bar')
+    # B_bar = tf.Variable(B_bar, trainable=True, name='B_bar')
     return Lambda_bar, B_bar
 
 
@@ -237,7 +237,7 @@ def apply_ssm(Lambda_bar, B_bar, C_tilde, input_sequence, conj_sym, bidirectiona
     """
     Lambda_elements = Lambda_bar * tf.ones((input_sequence.shape[0],
                                             Lambda_bar.shape[0]))
-    Bu_elements = tf.function(lambda u: B_bar @ u)(input_sequence) # TODO jax.vmap to tensorflow what??
+    Bu_elements = tf.vectorized_map(lambda u: B_bar @ u)(input_sequence) # TODO jax.vmap to tensorflow vectorized_map
 
     # TODO scan associate reverse
     # _, xs = tfp.math.scan_associative(fn=binary_operator, elems=[Lambda_elements, Bu_elements])
@@ -289,10 +289,7 @@ class S5Layer(keras.Model):
 
     """ The S5 SSM
         Args:
-            Lambda_re_init (complex64): Real part of init diag state matrix  (P,)
-            Lambda_im_init (complex64): Imag part of init diag state matrix  (P,)
-            V           (complex64): Eigenvectors used for init           (P,P)
-            Vinv        (complex64): Inverse eigenvectors used for init   (P,P)
+            
             H           (int32):     Number of features of input seq 
             P           (int32):     state size
             C_init      (string):    Specifies How C is initialized
@@ -332,25 +329,22 @@ class S5Layer(keras.Model):
 
         # TODO initialize parameters here but some are not trainable
         # Initialize diagonal state to state matrix Lambda (eigenvalues)
-        # self.Lambda_re = self.param("Lambda_re", lambda rng, shape: self.Lambda_re_init, (None,))
-        # self.Lambda_im = self.param("Lambda_im", lambda rng, shape: self.Lambda_im_init, (None,))
-
-        self.Lambda_re = tf.Variable(self.Lambda_re_init, trainable=True, name="Lambda_re")
         self.Lambda_im = tf.Variable(self.Lambda_im_init, trainable=True, name="Lambda_im")
         if self.clip_eigs:
-            lambda_value = tf.complex(tf.clip_by_value(self.Lambda_re_init, None, -1e-4), self.Lambda_im_init)
+            self.Lambda_re = tf.Variable(self.Lambda_re_init, trainable=True,
+                                         name="Lambda_re", constraint=lambda x: tf.clip_by_value(x, None, -1e-4))
+            self.Lambda = tf.complex(self.Lambda_re, self.Lambda_im)
         else:
-            lambda_value = tf.complex(self.Lambda_re_init, self.Lambda_im_init)
-        self.Lambda = tf.Variable(lambda_value, trainable=True, name='Lambda', dtype=tf.complex64)
+            self.Lambda_re = tf.Variable(self.Lambda_re_init, trainable=True, name="Lambda_re")
+            self.Lambda = tf.complex(self.Lambda_re, self.Lambda_im)
+
         # Initialize input to state (B) matrix
-        B_init = tf.random.truncated_normal()
         B_shape = (local_P, self.H)
-        B_rng = tf.random.Generator.get_global_generator().make_seeds(count=1)
-        B = init_VinvB(B_init, B_rng, B_shape, self.Vinv)
+        B = init_VinvB(B_shape, self.Vinv)
 
         self.B = tf.Variable(B, trainable=True, name='B')
-        B_tilde_value = tf.complex(B[..., 0], B[..., 1])
-        B_tilde = tf.Variable(B_tilde_value,  trainable=True, name='B_tilde')
+        B_tilde = tf.complex(self.B[..., 0], self.B[..., 1])
+
 
         # Initialize state to output (C) matrix
         if self.C_init in ["trunc_standard_normal"]:
@@ -370,51 +364,54 @@ class S5Layer(keras.Model):
                 C_shape = [self.H, self.P, 2]
             C = tf.random.normal(shape=C_shape, stddev=0.5 ** 0.5)
             self.C = tf.Variable(C, trainable=True, name='C')
-            C_tilde = tf.complex(C[..., 0], C[..., 1])
-            self.C_tilde = tf.Variable(C_tilde, trainable=True, name='True')
+            self.C_tilde = tf.complex(self.C[..., 0], self.C[..., 1])
 
         else:
             C_shape = (self.H, self.P, 2)
             if self.bidirectional:
-                c1_rng = tf.random.Generator.get_global_generator().make_seeds(count=1)
-                c1 = init_CV(C_init, c1_rng, C_shape, self.V)
-
+                c1 = init_CV(C_init, C_shape, self.V)
                 self.C1 = tf.Variable(c1, trainable=True, name='C1')
-                c2_rng = tf.random.Generator.get_global_generator().make_seeds(count=1)
-                c2 = init_CV(C_init, c2_rng, C_shape, self.V)
-                self.C1 = tf.Variable(c2, trainable=True, name='C1')
+                c2 = init_CV(C_init, C_shape, self.V)
+                self.C2 = tf.Variable(c2, trainable=True, name='C1')
 
-                C1 = tf.complex(c1[..., 0], c1[..., 1])
-                C2 = tf.complex(c2[..., 0], c2[..., 1])
-                self.C_tilde = tf.Variable(tf.concat((C1, C2), axis=-1), trainable=True, name='C_tilde')
+                C1 = tf.complex(self.C1[..., 0], self.C1[..., 1])
+                C2 = tf.complex(self.C2[..., 0], self.C2[..., 1])
+                self.C_tilde = tf.concat((C1, C2), axis=-1)
 
             else:
-                c_rng = tf.random.Generator.get_global_generator().make_seeds(count=1)
-                C = init_CV(C_init, c_rng, C_shape, self.V)
+                C = init_CV(C_init, C_shape, self.V)
 
                 self.C = tf.Variable(C, trainable=True, name='C')
 
-                self.C_tilde = tf.Variable(tf.complex(C[..., 0], C[..., 1]), trainable=True, name='C_tilde')
+                self.C_tilde = tf.complex(self.C[..., 0], self.C[..., 1])
 
         # Initialize feedthrough (D) matrix
-        self.D = tf.Variable(tf.random.normal(shape=(self.H,), stddev=1.0), trainable=True, name='D')
+        self.D = tf.Variable(tf.random.normal(shape=[self.H,], stddev=1.0), trainable=True, name='D')
 
-        #TODO Initialize learnable discretization timescale value
+        # TODO Initialize learnable discretization timescale value
         rng_log_steps = tf.random.Generator.get_global_generator().make_seeds(count=1)
         log_step = init_log_steps(key=rng_log_steps, input=(self.P, self.dt_min, self.dt_max))
         self.log_step = tf.Variable(log_step, trainable=True, name='log_step')
-        step_value = self.step_rescale * tf.math.exp(log_step[:, 0])
-        step = tf.Variable(step_value, trainable=True, name='step')
+        step = self.step_rescale * tf.math.exp(self.log_step[:, 0])
+
 
         # Discretize
         if self.discretization in ["zoh"]:
-            self.Lambda_bar, self.B_bar = discretize_zoh(lambda_value, B_tilde_value, step_value)
+            self.Lambda_bar, self.B_bar = discretize_zoh(self.Lambda, B_tilde, step)
         elif self.discretization in ["bilinear"]:
-            self.Lambda_bar, self.B_bar = discretize_bilinear(lambda_value, B_tilde_value, step_value)
+            self.Lambda_bar, self.B_bar = discretize_bilinear(self.Lambda, B_tilde, step)
         else:
             raise NotImplementedError("Discretization method {} not implemented".format(self.discretization))
 
     def init_set_up(self):
+        """
+            define:
+            Lambda_re_init (complex64): Real part of init diag state matrix  (P,)
+            Lambda_im_init (complex64): Imag part of init diag state matrix  (P,)
+            V           (complex64): Eigenvectors used for init           (P,P)
+            Vinv        (complex64): Inverse eigenvectors used for init   (P,P)
+
+        """
         # determine the size of initial blocks
         block_size = int(self.ssm_size / self.blocks)
         # Initialize state matrix A using approximation to HiPPO-LegS matrix

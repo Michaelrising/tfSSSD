@@ -8,8 +8,8 @@ if __name__ == "__main__":
 
     # current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_loc', type=str, default='20230106-173320', help='The location of the log file')
-    parser.add_argument('--algo', type=str, default='transformer', help='The Algorithm for imputation: transformer or S4')
+    parser.add_argument('--model_loc', type=str, default='20230109-191142', help='The location of the log file')
+    parser.add_argument('--algo', type=str, default='S4', help='The Algorithm for imputation: transformer or S4')
     parser.add_argument('--data', type=str, default='mujoco', help='The data set for training')
     parser.add_argument('--cuda', type=int, default=0, help='The CUDA device for training')
     parser.add_argument('--n_samples', '-n', type=int, default=50, help='The number of samples to evaluate')
@@ -31,10 +31,10 @@ if __name__ == "__main__":
     observed_data, ob_mask, gt_mask = np.load(log_path + '/observed_data.npy'), np.load(log_path + '/ob_mask.npy'), np.load(log_path + '/gt_mask.npy')
     training_data = rearrange(tf.convert_to_tensor(observed_data[:16]), 'b l k -> b k l')
     CSDIImputer = CSDIImputer(model_path, log_path, config_path, algo=args.algo)
-    _, _ = CSDIImputer.train(training_data, infer_flag=True)
-
-    CSDIImputer.model.load_weights(model_path)#.expect_partial()
-
+    # _, _ = CSDIImputer.train(training_data, infer_flag=True)
+    #
+    # CSDIImputer.model.load_weights(model_path)#.expect_partial()
+    CSDIImputer.model = keras.models.load_model(model_path)
     imputed_data = CSDIImputer.imputer(sample=observed_data, gt_mask=gt_mask, ob_masks=ob_mask, n_samples=5)
     # imputations = imputed_data.stack()  # int(sample.shape[0]/self.batch_size) * n_samples * B * K * L
     imputations = rearrange(imputed_data, 'i j b k l -> i b j l k')

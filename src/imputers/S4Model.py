@@ -172,7 +172,6 @@ def cauchy_slow(v, z, w):
 
 def power(L, A, v=None):
     """ Compute A^L and the scan sum_i A^i v_i
-
     A: (..., N, N)
     v: (..., N, L)
     """
@@ -227,7 +226,6 @@ def embed_c2r(A):
 
 def transition(measure, N, **measure_args):
     """ A, B transition matrices for different measures
-
     measure: the type of measure
       legt - Legendre (translated)
       legs - Legendre (scaled)
@@ -393,25 +391,20 @@ def bilinear(dt, A, B=None):
 
 class SSKernelNPLR(keras.layers.Layer):
     """Stores a representation of and computes the SSKernel function K_L(A^dt, B^dt, C) corresponding to a discretized state space, where A is Normal + Low Rank (NPLR)
-
     The class name stands for 'State-Space SSKernel for Normal Plus Low-Rank'.
     The parameters of this function are as follows.
-
     A: (... N N) the state matrix
     B: (... N) input matrix
     C: (... N) output matrix
     dt: (...) timescales / discretization step size
     p, q: (... P N) low-rank correction to A, such that Ap=A+pq^T is a normal matrix
-
     The forward pass of this Module returns:
     (... L) that represents represents FFT SSKernel_L(A^dt, B^dt, C)
-
     """
 
     # @torch.no_grad() in torch the gradient will automatically traced, but tensorflow needs tf.GradientTape()
     def _setup_C(self, double_length=False):
         """ Construct C~ from C
-
         double_length: current C is for length L, convert it to length 2L
         """
         C = _r2c(self.C)
@@ -434,11 +427,13 @@ class SSKernelNPLR(keras.layers.Layer):
     def _omega(self, L, dtype, cache=True):
         """ Calculate (and cache) FFT nodes and their "unprocessed" them with the bilinear transform
         This should be called everytime the internal length self.L changes """
-        omega = np.exp(-2j * np.pi / (L))
-        omega = omega ** np.arange(0, L // 2 + 1)
-        omega = tf.constant(omega, dtype=dtype)  # \omega_{2L}
+        omega = tf.math.exp(tf.complex(0., tf.cast(-2 * np.pi / float(L), tf.float32)))
+        omega = omega ** tf.complex(tf.cast(tf.range(0, L // 2 + 1), tf.float32), 0.)
+        omega = tf.cast(omega, dtype=dtype)  # \omega_{2L}
         z = 2 * (1 - omega) / (1 + omega)
         if cache:
+            # self.omega = _c2r(omega)
+            # self.z = _c2r(z)
             setattr(self, 'omega', tf.Variable(_c2r(omega), name='omega', trainable=False))
             setattr(self, 'z', tf.Variable(_c2r(z), name='z', trainable=False))
         return omega, z
@@ -459,17 +454,14 @@ class SSKernelNPLR(keras.layers.Layer):
         p: (r, N) low-rank correction to A
         q: (r, N)
         A represented by diag(w) - pq^*
-
         B: (N)
         dt: (H) timescale per feature
         C: (H, C, N) system is 1-D to c-D (channels)
-
         hurwitz: tie pq and ensure w has negative real part
         trainable: toggle which of the parameters is trainable
         lr: add hook to set lr of hippo parameters specially (everything besides C)
         tie_state: tie all state parameters across the H hidden features
         length_correction: multiply C by (I - dA^L) - can be turned off when L is large for slight speedup at initialization (only relevant when N large as well)
-
         Note: tensor shape N here denotes half the true state size, because of conjugate symmetry
         """
 
@@ -535,16 +527,7 @@ class SSKernelNPLR(keras.layers.Layer):
             w = _r2c(self.w)  # (..., N)
         return w
 
-    def call(self, state=None, rate=1.0, L=None):
-        """
-        state: (..., s, N) extra tensor that augments B
-        rate: sampling rate factor
-
-        returns: (..., c+s, L)
-        """
-        # Handle sampling rate logic
-        # The idea is that this kernel's length (in continuous units) is self.L, while we are asked to provide a kernel of length L at (relative) sampling rate rate
-        # If either are not passed in, assume we're not asked to change the scale of our kernel
+    def omega_z(self, rate=1.0, L = None):
         assert not (rate is None and L is None)
         if rate is None:
             rate = self.L / L
@@ -552,8 +535,28 @@ class SSKernelNPLR(keras.layers.Layer):
             L = int(self.L / rate)
 
         # Increase the internal length if needed
-        while rate * L > self.L:
-            self.double_length()
+        while rate * float(L) > float(self.L):
+            self._setup_C(double_length=True)
+
+    @tf.function #(input_signature=[tf.TensorSpec((), dtype=tf.float32), tf.TensorSpec((), tf.int32)])
+    def call(self, rate=1.0, L=None, state=None):
+        """
+        state: (..., s, N) extra tensor that augments B
+        rate: sampling rate factor
+        returns: (..., c+s, L)
+        """
+        # Handle sampling rate logic
+        # The idea is that this kernel's length (in continuous units) is self.L, while we are asked to provide a kernel of length L at (relative) sampling rate rate
+        # If either are not passed in, assume we're not asked to change the scale of our kernel
+        # assert not (rate is None and L is None)
+        # if rate is None:
+        #     rate = self.L / L
+        # if L is None:
+        #     L = int(self.L / rate)
+        #
+        # # Increase the internal length if needed
+        # while rate * float(L) > float(self.L):
+        #     self._setup_C(double_length=True)
 
         dt = tf.exp(self.log_dt) * rate
         B = _r2c(self.B)
@@ -700,9 +703,7 @@ class SSKernelNPLR(keras.layers.Layer):
     def _step_state_linear(self, u=None, state=None):
         """
         Version of the step function that has time O(N) instead of O(N^2) per step, which takes advantage of the DPLR form and bilinear discretization.
-
         Unfortunately, as currently implemented it's about 2x slower because it calls several sequential operations. Perhaps a fused CUDA kernel implementation would be much faster
-
         u: (H) input
         state: (H, N/2) state with conjugate pairs
           Optionally, the state can have last dimension N
@@ -877,7 +878,6 @@ class SSKernelNPLR(keras.layers.Layer):
 
 class HippoSSKernel(keras.layers.Layer):
     """Wrapper around SSKernel that generates A, B, C, dt according to HiPPO arguments.
-
     The SSKernel is expected to support the interface
     forward()
     default_state()
@@ -923,7 +923,7 @@ class HippoSSKernel(keras.layers.Layer):
 
         w, p, B, _ = nplr(measure, self.N, rank, dtype=dtype)
         C = tf.complex(tf.random.normal([channels, self.H, self.N // 2], dtype=dtype), tf.random.normal([channels, self.H, self.N // 2], dtype=dtype))
-        # C = tf.random.normal([channels, self.H, self.N // 2], dtype=cdtype)
+        C = tf.cast(C, cdtype)
         self.kernel = SSKernelNPLR(
             L, w, p, B, C,
             log_dt,
@@ -935,8 +935,10 @@ class HippoSSKernel(keras.layers.Layer):
             verbose=verbose,
         )
 
+    @tf.function
     def call(self, L=None):
-        k, _ = self.kernel.call(rate=self.rate, L=L)
+        # self.kernel.omega_z(rate=self.rate)
+        k, _ = self.kernel(rate=self.rate, L=L)
         return tf.cast(k, dtype=tf.float32)
 
     def step(self, u, state, **kwargs):
@@ -967,7 +969,7 @@ class S4(keras.layers.Layer):
             self,
             d_model,
             d_state=64,
-            l_max=1,
+            l_max=100,
             # Maximum length of sequence. Fine if not provided: the kernel will keep doubling in length until longer than sequence. However, this can be marginally slower if the true length is not a power of 2
             channels=1,  # maps 1-dim to C-dim
             bidirectional=False,
@@ -992,7 +994,6 @@ class S4(keras.layers.Layer):
         bidirectional: bidirectional
         dropout: standard dropout argument
         transposed: choose backbone axis ordering of (B, L, H) or (B, H, L) [B=batch size, L=sequence length, H=hidden dimension]
-
         Other options are all experimental and should not need to be configured
         """
 
@@ -1039,19 +1040,18 @@ class S4(keras.layers.Layer):
             weight_norm=weight_norm,
         )
 
-    @tf.function
-    def call(self, u, **kwargs):  # absorbs return_output and transformer src mask
+    @tf.function(input_signature=[tf.TensorSpec(shape=[None, 64, 100], dtype=tf.float32)])
+    def call(self, u):  # absorbs return_output and transformer src mask
         """
         u: (B H L) if self.transposed else (B L H)
         state: (H N) never needed unless you know what you're doing
-
         Returns: same shape as u
         """
         if not self.transposed: u = tf.transpose(u, [0, 2, 1])
         L = u.shape[-1]
 
         # Compute SS Kernel
-        k = self.kernel.call(L=L)  # (C H L) (B C H L)
+        k = self.kernel(L)  # (C H L) (B C H L)
 
         # Convolution
         if self.bidirectional:
@@ -1066,7 +1066,7 @@ class S4(keras.layers.Layer):
         y = tf.signal.irfft(y_f, [2 * L])[..., :L]  # (B C H L)
 
         # Compute D term in state space equation - essentially a skip connection
-        y = y + tf.einsum('bhl,ch->bchl', u, self.D)  # u.unsqueeze(-3) * self.D.unsqueeze(-1)
+        y = y + tf.einsum('bhl,ch -> bchl', u, self.D)  # u.unsqueeze(-3) * self.D.unsqueeze(-1)
 
         # Optional hyper-network multiplication
         if self.hyper:
@@ -1087,7 +1087,6 @@ class S4(keras.layers.Layer):
 
     def step(self, u, state):
         """ Step one time step as a recurrent model. Intended to be used during validation.
-
         u: (B H)
         state: (B H N)
         Returns: output (B H), state (B H N)
@@ -1133,11 +1132,11 @@ class S4Layer(keras.Model):
         self.norm_layer = keras.layers.LayerNormalization(axis=-1) if layer_norm else tf.identity
         self.dropout = keras.layers.SpatialDropout1D(dropout) if dropout > 0 else tf.identity
 
-    @tf.function
+    @tf.function(input_signature=[tf.TensorSpec(shape=[None, 64, 100], dtype=tf.float32)])
     def call(self, x):
         # x has shape # batch, feature, seq
         # x = tf.transpose(x, perm=[1, 2, 0])  (as expected from S4 with transposed=True)
-        xout, _ = self.s4_layer.call(x)  # batch, feature,  seq,
+        xout, _ = self.s4_layer(x)  # batch, feature,  seq,
         xout = self.dropout(tf.transpose(xout, perm=[0,2,1]))
         xout = xout + tf.transpose(x, perm=[0,2,1])  # skip connection   # batch, seq, feature
         return self.norm_layer(xout) # apply normalization to features
@@ -1147,5 +1146,3 @@ class S4Layer(keras.Model):
         self.s4_layer.built = True
         self.s4_layer.kernel.built = True
         self.s4_layer.kernel.kernel.built = True
-
-

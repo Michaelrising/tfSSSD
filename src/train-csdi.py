@@ -8,6 +8,7 @@ if __name__ == "__main__":
     parser.add_argument('--data', type=str, default='mujoco', help='The data set for training')
     parser.add_argument('--cuda', type=int, default=1, help='The CUDA device for training')
     parser.add_argument('--epochs', type=int, default=100, help='The number of epochs for training')
+    parser.add_argument('--batch_size', type=int, default=32, help='The number of batch size')
     args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda)
     os.environ['TF_GPU_ALLOCATOR']='cuda_malloc_async'
@@ -40,7 +41,7 @@ if __name__ == "__main__":
     validation_data = tf.convert_to_tensor(all_data[6400:7680])
     predicton_data = tf.convert_to_tensor(all_data[7680:])
     print('Data loaded')
-    CSDIImputer = CSDIImputer(model_path, log_path, config_path, epochs=args.epochs, algo=args.algo)
+    CSDIImputer = CSDIImputer(model_path, log_path, config_path, epochs=args.epochs, algo=args.algo, batch_size=args.batch_size)
     train_data, validation_data = CSDIImputer.train(training_data, validation_data)
     # test_data = tf.convert_to_tensor(training_data[7000:])
     observed_data, ob_mask, gt_mask, _ = train_data

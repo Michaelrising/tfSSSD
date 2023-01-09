@@ -178,11 +178,11 @@ def get_torch_trans(heads=8, layers=1, in_channels=64, out_channels=64):
 
 
 
-def Conv1d_with_init(in_channels, out_channels, kernel_size, initializer=None, activation=None):
+def Conv1d_with_init(in_channels, out_channels, kernel_size, initializer=None, activation=None, name=None):
     if initializer is None:
         initializer = tf.keras.initializers.HeNormal()
     layer = keras.layers.Conv1D(out_channels, kernel_size, data_format="channels_first", kernel_initializer=initializer,
-                                activation=activation)
+                                activation=activation, name=name)
     return layer
 
 
@@ -221,14 +221,14 @@ class diff_CSDI(keras.Model): #layers.Layer
         self.channels = config["channels"]
         self.algo = config['time_layer']
         # feature first
-        self.input_projection = Conv1d_with_init(inputdim, self.channels, 1, activation='relu')
+        self.input_projection = Conv1d_with_init(inputdim, self.channels, 1, activation='relu', name='input_projection')
 
         self.diffusion_embedding = DiffusionEmbedding(
             num_steps=config["num_steps"],
             embedding_dim=config["diffusion_embedding_dim"])
 
-        self.output_projection1 = Conv1d_with_init(self.channels, self.channels, 1, activation='relu')
-        self.output_projection2 = Conv1d_with_init(self.channels, 1, 1, tf.keras.initializers.Zeros())
+        self.output_projection1 = Conv1d_with_init(self.channels, self.channels, 1, activation='relu', name='output_projection1')
+        self.output_projection2 = Conv1d_with_init(self.channels, 1, 1, tf.keras.initializers.Zeros(), name='output_projection2')
 
         # feature last
         self.residual_layers = []
@@ -296,7 +296,8 @@ class ResidualBlock(keras.layers.Layer):
                                                                   norm_epsilon=1e-5,
                                                                   num_attention_heads=nheads,
                                                                   intermediate_size=64,
-                                                                  activation='gelu',)) # (batch_size, input_length, hidden_size)
+                                                                  activation='gelu',
+                                                                  use_bias = True)) # (batch_size, input_length, hidden_size)
         else:
             # TODO determine S4 input shape
             # self.time_layer.add(keras.layers.Input((channels, None)))
@@ -309,7 +310,8 @@ class ResidualBlock(keras.layers.Layer):
                                                                   norm_epsilon=1e-5,
                                                                   num_attention_heads=nheads,
                                                                   intermediate_size=64,
-                                                                  activation='gelu',)) # (batch_size, input_length, hidden_size)
+                                                                  activation='gelu',
+                                                                  use_bias = True)) # (batch_size, input_length, hidden_size)
 
     def forward_time(self, y, base_shape):
         B, channel, K, L = base_shape

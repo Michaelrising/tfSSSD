@@ -3,6 +3,26 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 import random
+from prettytable import PrettyTable
+
+
+def count_parameters(model):
+    table = PrettyTable(["Modules", "Parameters"])
+    total_trainable_params = 0
+    # total_non_trainable_params = 0
+    for parameter in model.trainable_variables:
+        name = parameter.name
+        params = 1
+        for k in parameter.shape:
+            params *= k
+        table.add_row([name, params])
+        total_trainable_params += params
+
+    print(table)
+    print(f"Total Trainable Params: {total_trainable_params}")
+    # print(f"Total non-Trainable Params: {total_non_trainable_params}")
+    return total_trainable_params
+
 
 
 def tensor_assign(input_tensor: tf.Tensor, positions: list, values: tf.float32) -> tf.Tensor:
