@@ -798,7 +798,7 @@ class SSKernelNPLR(keras.layers.Layer):
             self.dC = 2*self.dC[:, :, :self.N]
         elif mode == 'diagonal':
             # Eigendecomposition of the A matrix
-            L, V = tf.linalg.eigvals(self.dA)
+            L, V = tf.linalg.eig(self.dA)
             V_inv = tf.linalg.inv(V)
             # Check that the eigendedecomposition is correct
             # TODO 2-norm of two tensors in tensorflow

@@ -12,7 +12,7 @@ absl_logging.set_verbosity(absl_logging.ERROR)
 class CSDIImputer:
     def __init__(self, model_path, log_path, config_path,
               masking='rm',
-              missing_ratio_or_k=0.1,
+              missing_ratio_or_k=2,
               epochs=50,
               batch_size=64,
               lr=1.0e-3,
@@ -66,6 +66,7 @@ class CSDIImputer:
         self.model = None
         self.epochs = epochs
         self.lr = lr
+        self.missing_ratio_or_k = missing_ratio_or_k
 
         self.config = {}
 
@@ -100,6 +101,17 @@ class CSDIImputer:
         print('configuration file name:', config_filename)
         with open(config_filename + ".json", "w") as f:
             json.dump(self.config, f, indent=4)
+
+        # parameters for diffusion models
+        self.num_steps = num_steps
+        if schedule == "quad":
+            self.beta = tf.linspace(beta_start ** 0.5, beta_end ** 0.5, self.num_steps) ** 2
+        elif schedule == "linear":
+            self.beta = tf.linspace(beta_start, beta_end, self.num_steps)
+
+        self.alpha_hat = 1 - self.beta
+        self.alpha = tf.math.cumprod(self.alpha_hat)
+        self.alpha_tf = tf.expand_dims(tf.expand_dims(tf.cast(self.alpha, dtype=tf.float32), 1), 1)
 
         if algo == 'S4':
             print('='*50)
@@ -190,12 +202,12 @@ class CSDIImputer:
             save_format='tf'
         )
         # prepare data set
-        train_data = TrainDataset(series, missing_ratio_or_k=0.1,
-                                  masking='rm')  # observed_values_tensor, observed_masks_tensor, gt_mask_tensor
+        train_data = TrainDataset(series, missing_ratio_or_k=self.missing_ratio_or_k,
+                                  masking=masking)  # observed_values_tensor, observed_masks_tensor, gt_mask_tensor
         train_data = self.process_data(train_data) # observed_data, observed_mask, gt_mask, cond_mask
         if validation_series is not None:
-            validation_data = TrainDataset(validation_series, missing_ratio_or_k=0.1,
-                                  masking='rm')
+            validation_data = TrainDataset(validation_series, missing_ratio_or_k=self.missing_ratio_or_k,
+                                  masking=masking)
             validation_data = self.process_data(validation_data)
         else:
             validation_data = None
@@ -299,17 +311,6 @@ class CSDIImputer:
         cond_mask = tf.cast(cond_mask, dtype=tf.float32)
         return cond_mask
 
-    def load_weights(self, path_config_name= "/config_csdi_training.json"):
-
-        self.path_load_model_dic = self.model_path
-        self.path_config = self.config_path + path_config_name
-
-        '''
-        Load weights and configuration file for inference.
-
-        path_load_model: load model weights
-        path_config: load configuration file
-        '''
     def imputer(self,
                sample=None,
                gt_mask=None,
@@ -349,6 +350,7 @@ class CSDIImputer:
 
         return tf.stack(all_generated_samples) #, mse_total, mae_total, evalpoints_total
 
+    # @tf.function
     def impute(self, batch, n_samples):
         observed_data, observed_mask, gt_mask = batch
         cond_mask = gt_mask
@@ -364,7 +366,7 @@ class CSDIImputer:
         sample_i = 0
         while sample_i < n_samples:
             current_sample = tf.TensorArray(dtype=tf.float32, size=1, clear_after_read=False)
-            t = self.model.num_steps - 1
+            t = self.num_steps - 1
             current_sample = current_sample.write(0, tf.random.normal(observed_data.shape, dtype=observed_data.dtype))
             while t >= 0:
                 # if self.is_unconditional == True:
@@ -375,17 +377,17 @@ class CSDIImputer:
                 noisy_target = tf.expand_dims((1 - cond_mask) * current_sample.read(0), 1)
                 diff_input = tf.concat([cond_obs, noisy_target], axis=1)  # (B,2,K,L)
                 predicted = tf.stop_gradient(
-                    self.model.diffmodel.call(diff_input, side_info, tf.constant([t]))
+                    self.model.diffmodel((diff_input, side_info, tf.constant([t])))
                 )
 
-                coeff1 = 1 / self.model.alpha_hat[t] ** 0.5
-                coeff2 = (1 - self.model.alpha_hat[t]) / (1 - self.model.alpha[t]) ** 0.5
+                coeff1 = 1 / self.alpha_hat[t] ** 0.5
+                coeff2 = (1 - self.alpha_hat[t]) / (1 - self.alpha[t]) ** 0.5
                 current_sample = current_sample.write(0, coeff1 * (current_sample.read(0) - coeff2 * predicted))
 
                 if t > 0:
                     noise = tf.random.normal(observed_data.shape, dtype=observed_data.dtype)
                     sigma = (
-                                    (1.0 - self.model.alpha[t - 1]) / (1.0 - self.model.alpha[t]) * self.model.beta[t]
+                                    (1.0 - self.alpha[t - 1]) / (1.0 - self.alpha[t]) * self.beta[t]
                             ) ** 0.5
                     current_sample = current_sample.write(0, current_sample.read(0) + sigma * noise)  # .mark_used()
                 t -= 1

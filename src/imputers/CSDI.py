@@ -48,6 +48,17 @@ class tfCSDI(keras.Model):
     def metrics(self):
         return [self.loss_tracker]
 
+    def compile(self, optimizer):
+        super(tfCSDI, self).compile()
+        self.optimizer = optimizer
+        self.loss_fn = self.compute_loss
+
+    def built_after_run(self):
+        self.built = True
+        self.embed_layer.built = True
+        self.diffmodel.built = True
+        self.diffmodel.built_after_run()
+
     def time_embedding(self, pos, d_model=128):  # pos batch_size * seq_length
         position = tf.cast(tf.expand_dims(pos, 2), dtype=tf.float32)
         pow_y = tf.cast(tf.range(0, d_model, 2) / d_model, dtype=tf.float32)
@@ -58,6 +69,7 @@ class tfCSDI(keras.Model):
         pe_values = tf.reshape(pe_values, [tf.shape(pe_values)[0], tf.shape(pe_values)[1], d_model])  # B L 64*2
         return pe_values
 
+    @tf.function
     def get_side_info(self, observed_tp, cond_mask):
         B, K, L = cond_mask.shape
         time_embed = self.time_embedding(observed_tp, self.emb_time_dim)  # B d_model L
@@ -84,6 +96,7 @@ class tfCSDI(keras.Model):
         predicted = self.diffmodel(diff_input_batch)  # (B,K,L)
         return predicted
 
+    @tf.function
     def compute_loss(self, observed_data, cond_mask, observed_mask, observed_tp, is_train=True, set_t=-1):
         # side_info = self.get_side_info(observed_tp, cond_mask)
         if is_train:
@@ -121,17 +134,6 @@ class tfCSDI(keras.Model):
             total_input = tf.concat([cond_obs, noisy_target], axis=1)  # (B,2,K,L)
 
         return total_input
-
-    def compile(self, optimizer):
-        super(tfCSDI, self).compile()
-        self.optimizer = optimizer
-        self.loss_fn = self.compute_loss
-
-    def built_after_run(self):
-        self.built = True
-        self.embed_layer.built = True
-        self.diffmodel.built = True
-        self.diffmodel.built_after_run()
 
     @tf.function(input_signature=[((tf.TensorSpec([None, 14, 100], tf.float32),
                                     tf.TensorSpec([None, 14, 100], tf.float32),

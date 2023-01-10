@@ -5,10 +5,11 @@ from datetime import datetime
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--algo', type=str, default='S4', help='The Algorithm for imputation: transformer or S4')
-    parser.add_argument('--data', type=str, default='mujoco', help='The data set for training')
+    parser.add_argument('--data', type=str, default='stocks', help='The data set for training')
     parser.add_argument('--cuda', type=int, default=1, help='The CUDA device for training')
-    parser.add_argument('--epochs', type=int, default=100, help='The number of epochs for training')
+    parser.add_argument('--epochs', type=int, default=10, help='The number of epochs for training')
     parser.add_argument('--batch_size', type=int, default=32, help='The number of batch size')
+    parser.add_argument('--masking', type=str, default='holiday', help='The masking strategy')
     args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda)
     os.environ['TF_GPU_ALLOCATOR']='cuda_malloc_async'
@@ -33,16 +34,32 @@ if __name__ == "__main__":
         os.makedirs(log_path)
     if not os.path.exists(config_path):
         os.makedirs(config_path)
-
-    all_data = np.load('../datasets/Mujoco/train_mujoco.npy')
-    # training_data = np.split(training_data, 160, 0)
-    all_data = np.array(all_data)
-    training_data = tf.convert_to_tensor(all_data[:6400])
-    validation_data = tf.convert_to_tensor(all_data[6400:7680])
-    predicton_data = tf.convert_to_tensor(all_data[7680:])
+    if args.data == 'mujoco':
+        all_data = np.load('../datasets/Mujoco/train_mujoco.npy')
+        all_data = np.array(all_data)
+        training_data = tf.convert_to_tensor(all_data[:6400])
+        validation_data = tf.convert_to_tensor(all_data[6400:7680])
+        predicton_data = tf.convert_to_tensor(all_data[7680:])
+    if args.data == 'stocks':
+    # Stock data
+        all_data = np.load('../datasets/Stocks/DJ_all_stocks_2013-01-02_to_2023-01-01.npy') # Time_length * num_stocks * feature [B L K]
+        all_data = all_data[1:]
+        # all_data = np.array(np.array_split(all_data, int(all_data.shape[0]/args.batch_size)))
+        training_data = tf.convert_to_tensor(all_data[:int(0.8*all_data.shape[0])])
+        validation_data = tf.convert_to_tensor(all_data[int(0.8*all_data.shape[0]):])
     print('Data loaded')
-    CSDIImputer = CSDIImputer(model_path, log_path, config_path, epochs=args.epochs, algo=args.algo, batch_size=args.batch_size)
-    train_data, validation_data = CSDIImputer.train(training_data, validation_data)
+    CSDIImputer = CSDIImputer(model_path,
+                              log_path,
+                              config_path,
+                              masking=args.masking,
+                              epochs=args.epochs,
+                              algo=args.algo,
+                              batch_size=args.batch_size,
+                              target_strategy='blockout',
+                              )
+    train_data, validation_data = CSDIImputer.train(training_data,
+                                                    validation_data,
+                                                    masking=args.masking)
     # test_data = tf.convert_to_tensor(training_data[7000:])
     observed_data, ob_mask, gt_mask, _ = train_data
 
