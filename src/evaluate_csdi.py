@@ -8,7 +8,7 @@ if __name__ == "__main__":
 
     # current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_loc', type=str, default='20230110-111728', help='The location of the log file')
+    parser.add_argument('--model_loc', type=str, default=None, help='The location of the log file')
     parser.add_argument('--algo', type=str, default='S4', help='The Algorithm for imputation: transformer or S4')
     parser.add_argument('--data', type=str, default='mujoco', help='The data set for training')
     parser.add_argument('--cuda', type=int, default=0, help='The CUDA device for training')
@@ -33,15 +33,16 @@ if __name__ == "__main__":
     files_list = os.listdir(model_path)
     target_file = '00000000-000000'
     for file in files_list:
-        if file.startswith('2022'):
+        if file.startswith('2023'):
             target_file = max(target_file, file)
-    target_file = args.model_loc
+    target_file = args.model_loc if args.model_loc is not None else target_file
     model_path = model_path + target_file + '/csdi_model'
     log_path = '../log/' + args.data + '/CSDI-' + args.algo + '/'
     log_path = log_path + target_file + '/csdi_log'
     config_path = './config'
     # load data from training
     observed_data, ob_mask, gt_mask = np.load(log_path + '/observed_data.npy'), np.load(log_path + '/ob_mask.npy'), np.load(log_path + '/gt_mask.npy')
+    print("Loaded Data from:{}".format(target_file))
     # training_data = rearrange(tf.convert_to_tensor(observed_data[:16]), 'b l k -> b k l')
     CSDIImputer = CSDIImputer(model_path, log_path, config_path, algo=args.algo, batch_size=args.batch_size)
     # _, _ = CSDIImputer.train(training_data, infer_flag=True)

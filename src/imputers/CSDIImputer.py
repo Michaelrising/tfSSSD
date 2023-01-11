@@ -12,10 +12,10 @@ absl_logging.set_verbosity(absl_logging.ERROR)
 class CSDIImputer:
     def __init__(self, model_path, log_path, config_path,
               masking='rm',
-              missing_ratio_or_k=2,
+              missing_ratio_or_k=0.1,
               epochs=50,
               batch_size=64,
-              lr=1.0e-3,
+              lr=2.0e-4,
               layers=4,
               channels=64,
               nheads=8,
@@ -115,11 +115,15 @@ class CSDIImputer:
 
         if algo == 'S4':
             print('='*50)
-            print("="*22 + 'CSDI-S4' + "="*22)
+            print("="*22 + 'CSDI-S4' + "="*21)
             print('=' * 50)
-        else:
+        elif algo=='transformer':
             print('=' * 50)
             print("=" * 17 + 'CSDI-TransFormer' + "=" * 17)
+            print('=' * 50)
+        elif algo == 'S5':
+            print('='*50)
+            print("="*22 + 'CSDI-S5' + "="*21)
             print('=' * 50)
         '''
         CSDI imputer
@@ -188,7 +192,7 @@ class CSDIImputer:
         values = [self.lr, self.lr * 0.1, self.lr * 0.1 * 0.1]
 
         learning_rate_fn = keras.optimizers.schedules.PiecewiseConstantDecay(boundaries, values)
-        optimizer = keras.optimizers.Adam(learning_rate=learning_rate_fn, epsilon=1e-6)
+        optimizer = keras.optimizers.Adam(learning_rate=learning_rate_fn, epsilon=1e-6, clipnorm=0.5)
         # define callback
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=self.log_path, histogram_freq=1)
         earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=10)
@@ -237,9 +241,9 @@ class CSDIImputer:
         if not infer_flag:
             self.model.compile(optimizer=optimizer)
             history = self.model.fit(x=train_data, batch_size=self.batch_size, epochs=self.epochs,
-                                     validation_data=(validation_data,),
+                                     # validation_data=(validation_data,),
                                      callbacks=[tensorboard_callback,
-                                                earlyStop_loss_callback,
+                                                # earlyStop_loss_callback,
                                                 best_checkpoint_callback
                                                 ])
 

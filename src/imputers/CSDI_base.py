@@ -7,6 +7,7 @@ from einops import rearrange
 # from .Encoder_keras import Encoder
 import tensorflow_models as tfm
 from .S4Model import S4Layer
+from .S5Model import S5Layer
 
 
 def quantile_loss(target, forecast, q: tf.float32, eval_points) -> tf.float32:
@@ -340,10 +341,11 @@ class ResidualBlock(keras.layers.Layer):
                                                                   intermediate_size=64,
                                                                   activation='gelu',
                                                                   use_bias = True)) # (batch_size, input_length, hidden_size)
-        else:
+        elif time_layer=='S4':
             # TODO determine S4 input shape
-            # self.time_layer.add(keras.layers.Input((channels, None)))
             self.time_layer = S4Layer(features=channels, lmax=100)
+        elif time_layer == 'S5':
+            self.time_layer = S5Layer(features=channels)
         self.feature_layer = keras.Sequential()
         self.feature_layer.add(keras.layers.Input((None, channels)))
         self.feature_layer.add(tfm.nlp.models.TransformerEncoder(num_layers=1,
@@ -360,7 +362,7 @@ class ResidualBlock(keras.layers.Layer):
         if L == 1:
             return y
         y = rearrange(y, '... c (k l) -> ... k c l', k=K) # b k c l
-        if self.time_layer_type=='transformer':
+        if self.time_layer_type=='transformer' or self.time_layer_type=='S5':
             y = rearrange(y, ' b k c l ->  (b k) l c') # in torch version, batch_first is False so it transposes input as L B C but we dont need to do here
             y = self.time_layer(y) # output is bk l c
             y = rearrange(y, '(b k) l c -> b (k l) c', k=K) # transpose to b k l c

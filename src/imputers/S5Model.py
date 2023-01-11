@@ -191,7 +191,7 @@ def discretize_bilinear(Lambda, B_tilde, Delta):
     B_bar = tf.Variable(B_bar, trainable=True, name='B_bar')
     return Lambda_bar, B_bar
 
-# @tf.function
+
 def discretize_zoh(Lambda, B_tilde, Delta):
     """ Discretize a diagonalized, continuous-time linear SSM
         using zero-order hold method.
@@ -212,55 +212,44 @@ def discretize_zoh(Lambda, B_tilde, Delta):
 
 # Parallel scan operations
 # @jax.vmap
-def binary_operator(q_i, q_j):
-    """ Binary operator for parallel scan of linear recurrence. Assumes a diagonal matrix A.
-        Args:
-            q_i: tuple containing A_i and Bu_i at position i       (P,), (P,)
-            q_j: tuple containing A_j and Bu_j at position j       (P,), (P,)
-        Returns:
-            new element ( A_out, Bu_out )
-    """
-    A_i, b_i = q_i
-    A_j, b_j = q_j
-    return A_j * A_i, A_j * b_i + b_j
 
-
-def apply_ssm(Lambda_bar, B_bar, C_tilde, input_sequence, conj_sym, bidirectional):
-    """ Compute the LxH output of discretized SSM given an LxH input.
-        Args:
-            Lambda_bar (complex64): discretized diagonal state matrix    (P,)
-            B_bar      (complex64): discretized input matrix             (P, H)
-            C_tilde    (complex64): output matrix                        (H, P)
-            input_sequence (float32): input sequence of features         (B, L, H)
-            conj_sym (bool):         whether conjugate symmetry is enforced
-            bidirectional (bool):    whether bidirectional setup is used,
-                                  Note for this case C_tilde will have 2P cols
-        Returns:
-            ys (float32): the SSM outputs (S5 layer preactivations)      (B, L, H)
-    """
-    input_sequence = tf.cast(input_sequence, dtype=Lambda_bar.dtype)
-
-    Lambda_elements = Lambda_bar * tf.cast(tf.ones(shape=[tf.shape(input_sequence)[0], tf.shape(input_sequence)[1], Lambda_bar.shape[0]]),
-                                           dtype=Lambda_bar.dtype) # B L P
-    Bu_elements = tf.vectorized_map(lambda u:tf.einsum('p h,l h -> l p', B_bar, u), elems=input_sequence)  # B L P
-    # Bu_elements = tf.vectorized_map(lambda u: B_bar @ u)(input_sequence) #
-
-    # TODO scan associate reverse
-    # _, xs = tfp.math.scan_associative(fn=binary_operator, elems=[Lambda_elements, Bu_elements])
-    _, xs = tf.scan(binary_operator, (Lambda_elements, Bu_elements))
-
-    if bidirectional:
-        # _, xs2 = tfp.math.scan_associative(binary_operator,
-        #                                   [Lambda_elements, Bu_elements]) # reverse=True
-        _, xs2 = tf.scan(binary_operator, (Lambda_elements, Bu_elements), reverse=True)
-
-        xs = tf.concat((xs, xs2), axis=-1)
-    # xs has shape B L P or B L 2P
-    # the return has shape
-    if conj_sym:
-        return tf.vectorized_map(lambda x: 2.0*tf.math.real(tf.einsum('h p, l p -> l h', C_tilde, x)), xs) # h p, b l p -> b l h
-    else:
-        return tf.vectorized_map(lambda x: tf.math.real(tf.einsum('h p, l p -> l h', C_tilde, x)), xs) # h p, b l p -> b l h
+# @tf.function
+# def apply_ssm(Lambda_bar, B_bar, C_tilde, input_sequence, conj_sym, bidirectional):
+#     """ Compute the LxH output of discretized SSM given an LxH input.
+#         Args:
+#             Lambda_bar (complex64): discretized diagonal state matrix    (P,)
+#             B_bar      (complex64): discretized input matrix             (P, H)
+#             C_tilde    (complex64): output matrix                        (H, P)
+#             input_sequence (float32): input sequence of features         (B, L, H)
+#             conj_sym (bool):         whether conjugate symmetry is enforced
+#             bidirectional (bool):    whether bidirectional setup is used,
+#                                   Note for this case C_tilde will have 2P cols
+#         Returns:
+#             ys (float32): the SSM outputs (S5 layer preactivations)      (B, L, H)
+#     """
+#     input_sequence = tf.cast(input_sequence, dtype=Lambda_bar.dtype)
+#
+#     Lambda_elements = Lambda_bar * tf.cast(tf.ones(shape=[tf.shape(input_sequence)[0], tf.shape(input_sequence)[1], Lambda_bar.shape[0]]),
+#                                            dtype=Lambda_bar.dtype) # B L P
+#     Bu_elements = tf.vectorized_map(lambda u:tf.einsum('p h,l h -> l p', B_bar, u), elems=input_sequence)  # B L P
+#     # Bu_elements = tf.vectorized_map(lambda u: B_bar @ u)(input_sequence) #
+#
+#     # TODO scan associate reverse
+#     # _, xs = tfp.math.scan_associative(fn=binary_operator, elems=[Lambda_elements, Bu_elements])
+#     _, xs = tf.scan(binary_operator, (Lambda_elements, Bu_elements))
+#
+#     if bidirectional:
+#         # _, xs2 = tfp.math.scan_associative(binary_operator,
+#         #                                   [Lambda_elements, Bu_elements]) # reverse=True
+#         _, xs2 = tf.scan(binary_operator, (Lambda_elements, Bu_elements), reverse=True)
+#
+#         xs = tf.concat((xs, xs2), axis=-1)
+#     # xs has shape B L P or B L 2P
+#     # the return has shape
+#     if conj_sym:
+#         return tf.vectorized_map(lambda x: 2.0*tf.math.real(tf.einsum('h p, l p -> l h', C_tilde, x)), xs) # h p, b l p -> b l h
+#     else:
+#         return tf.vectorized_map(lambda x: tf.math.real(tf.einsum('h p, l p -> l h', C_tilde, x)), xs) # h p, b l p -> b l h
 
 
 class S5Layer(keras.Model):
@@ -336,21 +325,26 @@ class S5Layer(keras.Model):
 
         # TODO initialize parameters here but some are not trainable
         # Initialize diagonal state to state matrix Lambda (eigenvalues)
-        self.Lambda_im = tf.Variable(self.Lambda_im_init, trainable=False, name="Lambda_im")
+        self.Lambda_im = tf.Variable(self.Lambda_im_init, trainable=True, name="Lambda_im")
         if self.clip_eigs:
-            self.Lambda_re = tf.Variable(self.Lambda_re_init, trainable=False,
+            self.Lambda_re = tf.Variable(self.Lambda_re_init, trainable=True,
                                          name="Lambda_re", constraint=lambda x: tf.clip_by_value(x, None, -1e-4))
-            self.Lambda = tf.Variable(tf.complex(self.Lambda_re, self.Lambda_im), trainable=False, name='Lambda')
+            # self.Lambda = tf.Variable(tf.complex(self.Lambda_re, self.Lambda_im),
+            #                           trainable=True, name='Lambda',
+            #                           constraint=lambda x: tf.clip_by_value(tf.math.real(x), -100000, -1e-4))
         else:
-            self.Lambda_re = tf.Variable(self.Lambda_re_init, trainable=False, name="Lambda_re")
-            self.Lambda = tf.Variable(tf.complex(self.Lambda_re, self.Lambda_im), dtype=tf.complex64, trainable=False, name='Lambda')
+            self.Lambda_re = tf.Variable(self.Lambda_re_init, trainable=True, name="Lambda_re")
+            # self.Lambda = tf.Variable(tf.complex(self.Lambda_re, self.Lambda_im),
+            #                           dtype=tf.complex64, trainable=True,
+            #                           name='Lambda')
 
         # Initialize input to state (B) matrix
         B_shape = (local_P, self.H)
         B = init_VinvB(B_shape, self.Vinv)
 
-        self.B = tf.Variable(B, trainable=False, name='B')
-        self.B_tilde = tf.Variable(tf.complex(self.B[..., 0], self.B[..., 1]), dtype=tf.complex64, trainable=False, name='B_tilde')
+        self.B = tf.Variable(B, trainable=True, name='B')
+        # self.B_tilde = tf.Variable(tf.complex(self.B[..., 0], self.B[..., 1]),
+        #                            dtype=tf.complex64, trainable=True, name='B_tilde')
 
 
         # Initialize state to output (C) matrix
@@ -389,9 +383,9 @@ class S5Layer(keras.Model):
                 # c_rng = tf.random.Generator.make_seeds(count=1)
                 C = init_CV(C_init, C_shape, self.V)
 
-                self.C = tf.Variable(C, trainable=False, name='C')
+                self.C = tf.Variable(C, trainable=True, name='C')
 
-                self.C_tilde = tf.Variable(tf.complex(self.C[..., 0], self.C[..., 1]), dtype=tf.complex64, name='C_tilde')
+                # self.C_tilde = tf.Variable(tf.complex(self.C[..., 0], self.C[..., 1]), dtype=tf.complex64, name='C_tilde')
 
         # Initialize feedthrough (D) matrix
         self.D = tf.Variable(tf.random.normal(shape=[self.H,], stddev=1.0), dtype=tf.float32, trainable=True, name='D')
@@ -399,18 +393,19 @@ class S5Layer(keras.Model):
         # TODO Initialize learnable discretization timescale value
         log_step = init_log_steps(input=(self.P, self.dt_min, self.dt_max))
         self.log_step = tf.Variable(log_step, trainable=False, name='log_step')
-        self.step = tf.Variable(self.step_rescale * tf.math.exp(self.log_step[:, 0]), dtype=tf.float32, trainable=False, name='Delta')
+        self.step = tf.Variable(self.step_rescale * tf.math.exp(self.log_step[:, 0]),
+                                dtype=tf.float32, trainable=True, name='Delta')
 
 
         # Discretize
-        if self.discretization in ["zoh"]:
-            # self.discretize = discretize_zoh
-            self.Lambda_bar, self.B_bar = discretize_zoh(self.Lambda, self.B_tilde, self.step)
-        elif self.discretization in ["bilinear"]:
-            # self.discretize = discretize_bilinear
-            self.Lambda_bar, self.B_bar = discretize_bilinear(self.Lambda, self.B_tilde, self.step)
-        else:
-            raise NotImplementedError("Discretization method {} not implemented".format(self.discretization))
+        # if self.discretization in ["zoh"]:
+        #     # self.discretize = discretize_zoh
+        #     self.Lambda_bar, self.B_bar = discretize_zoh(self.Lambda, self.B_tilde, self.step)
+        # elif self.discretization in ["bilinear"]:
+        #     # self.discretize = discretize_bilinear
+        #     self.Lambda_bar, self.B_bar = discretize_bilinear(self.Lambda, self.B_tilde, self.step)
+        # else:
+        #     raise NotImplementedError("Discretization method {} not implemented".format(self.discretization))
 
     def init_set_up(self):
         """
@@ -453,20 +448,68 @@ class S5Layer(keras.Model):
         Compute the LxH output of the S5 SSM given an LxH input sequence
         using a parallel scan.
         Args:
-             input_sequence (float32): input sequence (L, H)
+            Lambda_bar (complex64): discretized diagonal state matrix    (P,)
+            B_bar      (complex64): discretized input matrix             (P, H)
+            C_tilde    (complex64): output matrix                        (H, P)
+            input_sequence (float32): input sequence of features         (B, L, H)
+            conj_sym (bool):         whether conjugate symmetry is enforced
+            bidirectional (bool):    whether bidirectional setup is used,
+                                  Note for this case C_tilde will have 2P cols
         Returns:
-            output sequence (float32): (L, H)
+            ys (float32): the SSM outputs (S5 layer preactivations)      (B, L, H)
+            Du + ys: output sequence (float32): (B, L, H)
         """
-        ys = apply_ssm(self.Lambda_bar,
-                       self.B_bar,
-                       self.C_tilde,
-                       input_sequence,
-                       self.conj_sym,
-                       self.bidirectional)
+
+        Identity = tf.ones(tf.shape(self.Lambda_re)[0], dtype=tf.complex64)
+        Lambda_bar = tf.complex(tf.exp(self.Lambda_re * self.step) * tf.math.cos(self.Lambda_im * self.step), tf.exp(self.Lambda_re * self.step) * tf.math.sin(self.Lambda_im * self.step))
+        B_bar = tf.expand_dims(tf.math.divide(1., tf.complex(self.Lambda_re, self.Lambda_im)) * (Lambda_bar - Identity), -1) * tf.complex(self.B[..., 0], self.B[..., 1])
+
+        Lambda_elements = Lambda_bar * tf.cast(
+            tf.ones(shape=[tf.shape(input_sequence)[0], tf.shape(input_sequence)[1], Lambda_bar.shape[0]]),
+            dtype=Lambda_bar.dtype)  # B L P
+        Bu_elements = tf.vectorized_map(lambda u: tf.einsum('p h,l h -> l p', B_bar, u),
+                                        elems=tf.cast(input_sequence, dtype=Lambda_bar.dtype))  # B L P
+        # Bu_elements = tf.vectorized_map(lambda u: B_bar @ u)(input_sequence) #
+
+        # TODO scan associate reverse
+        # _, xs = tfp.math.scan_associative(fn=binary_operator, elems=[Lambda_elements, Bu_elements])
+        _, xs = tf.scan(self.binary_operator, (Lambda_elements, Bu_elements), parallel_iterations=100)
+
+        if self.bidirectional:
+            # _, xs2 = tfp.math.scan_associative(binary_operator,
+            #                                   [Lambda_elements, Bu_elements]) # reverse=True
+            _, xs2 = tf.scan(self.binary_operator, (Lambda_elements, Bu_elements), reverse=True, parallel_iterations=100)
+
+            xs = tf.concat((xs, xs2), axis=-1)
+        # xs has shape B L P or B L 2P
+        # the return has shape
+        C_tilde = tf.complex(self.C[..., 0], self.C[..., 1])
+        if self.conj_sym:
+            ys = tf.vectorized_map(lambda x: 2.0 * tf.math.real(tf.einsum('h p, l p -> l h', C_tilde, x)),
+                                     xs)  # h p, b l p -> b l h
+        else:
+            ys = tf.vectorized_map(lambda x: tf.math.real(tf.einsum('h p, l p -> l h', C_tilde, x)),
+                                     xs)  # h p, b l p -> b l h
 
         # Add feedthrough matrix output Du;
-        Du =tf.vectorized_map(lambda u: self.D * u, input_sequence)
+        Du = tf.vectorized_map(lambda u: self.D * u, input_sequence)
         return ys + Du
+
+    @tf.function
+    def binary_operator(self, q_i, q_j):
+        """ Binary operator for parallel scan of linear recurrence. Assumes a diagonal matrix A.
+            Args:
+                q_i: tuple containing A_i and Bu_i at position i       (P,), (P,)
+                q_j: tuple containing A_j and Bu_j at position j       (P,), (P,)
+            Returns:
+                new element ( A_out, Bu_out )
+        """
+        A_i, b_i = q_i
+        A_j, b_j = q_j
+        return A_j * A_i, A_j * b_i + b_j
+
+    def built_after_run(self):
+        self.built = True
 
 # import os
 # os.environ["CUDA_VISIBLE_DEVICES"] = '0'
