@@ -182,16 +182,16 @@ def discretize_bilinear(Lambda, B_tilde, Delta):
         Returns:
             discretized Lambda_bar (complex64), B_bar (complex64)  (P,), (P,H)
     """
-    Identity = tf.ones(Lambda.shape[0])
+    Identity = tf.ones(Lambda.shape[0], dtype=Lambda.dtype)
 
-    BL = 1 / (Identity - (Delta / 2.0) * Lambda)
-    Lambda_bar = BL * (Identity + (Delta / 2.0) * Lambda)
-    B_bar = (BL * Delta)[..., None] * B_tilde
-    # Lambda_bar = tf.Variable(Lambda_bar, trainable=True, name='Lambda_bar')
-    # B_bar = tf.Variable(B_bar, trainable=True, name='B_bar')
+    BL = tf.math.divide(1., (Identity - tf.math.divide(Delta, 2.0) * Lambda))
+    Lambda_bar = BL * (Identity + tf.math.divide(tf.cast(Delta, Lambda.dtype), 2.0) * Lambda)
+    B_bar = tf.expand_dims(BL * tf.cast(Delta, Lambda.dtype), -1) * B_tilde
+    Lambda_bar = tf.Variable(Lambda_bar, trainable=True, name='Lambda_bar')
+    B_bar = tf.Variable(B_bar, trainable=True, name='B_bar')
     return Lambda_bar, B_bar
 
-
+# @tf.function
 def discretize_zoh(Lambda, B_tilde, Delta):
     """ Discretize a diagonalized, continuous-time linear SSM
         using zero-order hold method.
@@ -204,9 +204,9 @@ def discretize_zoh(Lambda, B_tilde, Delta):
     """
     Identity = tf.ones(Lambda.shape[0], dtype=Lambda.dtype)
     Lambda_bar = tf.math.exp(Lambda * tf.cast(Delta, Lambda.dtype))
-    B_bar = (1/Lambda * (Lambda_bar - Identity))[..., None] * B_tilde
-    # Lambda_bar = tf.Variable(Lambda_bar, trainable=True, name='Lambda_bar')
-    # B_bar = tf.Variable(B_bar, trainable=True, name='B_bar')
+    B_bar = tf.expand_dims(tf.math.divide(1., Lambda) * (Lambda_bar - Identity), -1) * B_tilde
+    Lambda_bar = tf.Variable(Lambda_bar, trainable=True, name='Lambda_bar')
+    B_bar = tf.Variable(B_bar, trainable=True, name='B_bar')
     return Lambda_bar, B_bar
 
 
@@ -231,32 +231,36 @@ def apply_ssm(Lambda_bar, B_bar, C_tilde, input_sequence, conj_sym, bidirectiona
             Lambda_bar (complex64): discretized diagonal state matrix    (P,)
             B_bar      (complex64): discretized input matrix             (P, H)
             C_tilde    (complex64): output matrix                        (H, P)
-            input_sequence (float32): input sequence of features         (L, H)
+            input_sequence (float32): input sequence of features         (B, L, H)
             conj_sym (bool):         whether conjugate symmetry is enforced
             bidirectional (bool):    whether bidirectional setup is used,
                                   Note for this case C_tilde will have 2P cols
         Returns:
-            ys (float32): the SSM outputs (S5 layer preactivations)      (L, H)
+            ys (float32): the SSM outputs (S5 layer preactivations)      (B, L, H)
     """
-    Lambda_elements = Lambda_bar * tf.ones((input_sequence.shape[0],
-                                            Lambda_bar.shape[0]))
-    Bu_elements = tf.vectorized_map(lambda u: B_bar @ u)(input_sequence) # TODO jax.vmap to tensorflow vectorized_map
+    input_sequence = tf.cast(input_sequence, dtype=Lambda_bar.dtype)
+
+    Lambda_elements = Lambda_bar * tf.cast(tf.ones(shape=[tf.shape(input_sequence)[0], tf.shape(input_sequence)[1], Lambda_bar.shape[0]]),
+                                           dtype=Lambda_bar.dtype) # B L P
+    Bu_elements = tf.vectorized_map(lambda u:tf.einsum('p h,l h -> l p', B_bar, u), elems=input_sequence)  # B L P
+    # Bu_elements = tf.vectorized_map(lambda u: B_bar @ u)(input_sequence) #
 
     # TODO scan associate reverse
     # _, xs = tfp.math.scan_associative(fn=binary_operator, elems=[Lambda_elements, Bu_elements])
-    _, xs = tf.scan(tf.vectorized_map(binary_operator), [Lambda_elements, Bu_elements])
+    _, xs = tf.scan(binary_operator, (Lambda_elements, Bu_elements))
 
     if bidirectional:
         # _, xs2 = tfp.math.scan_associative(binary_operator,
         #                                   [Lambda_elements, Bu_elements]) # reverse=True
-        _, xs2 = tf.scan(tf.vectorized_map(binary_operator), [Lambda_elements, Bu_elements], reverse=True)
+        _, xs2 = tf.scan(binary_operator, (Lambda_elements, Bu_elements), reverse=True)
 
         xs = tf.concat((xs, xs2), axis=-1)
-
+    # xs has shape B L P or B L 2P
+    # the return has shape
     if conj_sym:
-        return tf.vectorized_map(lambda x: 2.0*tf.math.real(C_tilde @ x))(xs)
+        return tf.vectorized_map(lambda x: 2.0*tf.math.real(tf.einsum('h p, l p -> l h', C_tilde, x)), xs) # h p, b l p -> b l h
     else:
-        return tf.vectorized_map(lambda x: tf.math.real(C_tilde @ x))(xs)
+        return tf.vectorized_map(lambda x: tf.math.real(tf.einsum('h p, l p -> l h', C_tilde, x)), xs) # h p, b l p -> b l h
 
 
 class S5Layer(keras.Model):
@@ -264,7 +268,7 @@ class S5Layer(keras.Model):
     def __init__(self,
                 ssm_size=256,
                 blocks=8,
-                H=64,
+                features=64,
                 discretization='zoh',
                 C_init='lecun_normal',
                 dt_min=0.001,
@@ -277,7 +281,7 @@ class S5Layer(keras.Model):
         super().__init__()
         self.ssm_size = ssm_size
         self.blocks = blocks
-        self.H = H
+        self.H = features # H
         self.P = ssm_size
         self.C_init = C_init
         self.discretization = discretization
@@ -293,7 +297,7 @@ class S5Layer(keras.Model):
     """ The S5 SSM
         Args:
             blocks      (int32):     Number of blocks, J, to initialize with 
-            H           (int32):     Number of features of input seq 
+            channels    (int32):     Number of features of input seq (H in the original codes)
             P           (int32):     state size
             C_init      (string):    Specifies How C is initialized
                          Options: [trunc_standard_normal: sample from truncated standard normal 
@@ -336,17 +340,17 @@ class S5Layer(keras.Model):
         if self.clip_eigs:
             self.Lambda_re = tf.Variable(self.Lambda_re_init, trainable=False,
                                          name="Lambda_re", constraint=lambda x: tf.clip_by_value(x, None, -1e-4))
-            self.Lambda = tf.Variable(tf.complex(self.Lambda_re, self.Lambda_im), name='Lambda')
+            self.Lambda = tf.Variable(tf.complex(self.Lambda_re, self.Lambda_im), trainable=False, name='Lambda')
         else:
             self.Lambda_re = tf.Variable(self.Lambda_re_init, trainable=False, name="Lambda_re")
-            self.Lambda = tf.Variable(tf.complex(self.Lambda_re, self.Lambda_im), name='Lambda')
+            self.Lambda = tf.Variable(tf.complex(self.Lambda_re, self.Lambda_im), dtype=tf.complex64, trainable=False, name='Lambda')
 
         # Initialize input to state (B) matrix
         B_shape = (local_P, self.H)
         B = init_VinvB(B_shape, self.Vinv)
 
         self.B = tf.Variable(B, trainable=False, name='B')
-        self.B_tilde = tf.Variable(tf.complex(self.B[..., 0], self.B[..., 1]), name='B_tilde')
+        self.B_tilde = tf.Variable(tf.complex(self.B[..., 0], self.B[..., 1]), dtype=tf.complex64, trainable=False, name='B_tilde')
 
 
         # Initialize state to output (C) matrix
@@ -367,7 +371,7 @@ class S5Layer(keras.Model):
                 C_shape = [self.H, self.P, 2]
             C = tf.random.normal(shape=C_shape, stddev=0.5 ** 0.5)
             self.C = tf.Variable(C, trainable=False, name='C')
-            self.C_tilde = tf.Variable(tf.complex(self.C[..., 0], self.C[..., 1]), name='C_tilde')
+            self.C_tilde = tf.Variable(tf.complex(self.C[..., 0], self.C[..., 1]), dtype=tf.complex64, name='C_tilde')
 
         else:
             C_shape = (self.H, self.P, 2)
@@ -379,29 +383,31 @@ class S5Layer(keras.Model):
 
                 C1 = tf.complex(self.C1[..., 0], self.C1[..., 1])
                 C2 = tf.complex(self.C2[..., 0], self.C2[..., 1])
-                self.C_tilde = tf.Variable(tf.concat((C1, C2), axis=-1), name='C_tilde')
+                self.C_tilde = tf.Variable(tf.concat((C1, C2), axis=-1), dtype=tf.complex64, name='C_tilde')
 
             else:
                 # c_rng = tf.random.Generator.make_seeds(count=1)
                 C = init_CV(C_init, C_shape, self.V)
 
-                self.C = tf.Variable(C, trainable=True, name='C')
+                self.C = tf.Variable(C, trainable=False, name='C')
 
-                self.C_tilde = tf.Variable(tf.complex(self.C[..., 0], self.C[..., 1]), name='C_tilde')
+                self.C_tilde = tf.Variable(tf.complex(self.C[..., 0], self.C[..., 1]), dtype=tf.complex64, name='C_tilde')
 
         # Initialize feedthrough (D) matrix
-        self.D = tf.Variable(tf.random.normal(shape=[self.H,], stddev=1.0), trainable=True, name='D')
+        self.D = tf.Variable(tf.random.normal(shape=[self.H,], stddev=1.0), dtype=tf.float32, trainable=True, name='D')
 
         # TODO Initialize learnable discretization timescale value
         log_step = init_log_steps(input=(self.P, self.dt_min, self.dt_max))
         self.log_step = tf.Variable(log_step, trainable=False, name='log_step')
-        self.step = tf.Variable(self.step_rescale * tf.math.exp(self.log_step[:, 0]), name='Delta')
+        self.step = tf.Variable(self.step_rescale * tf.math.exp(self.log_step[:, 0]), dtype=tf.float32, trainable=False, name='Delta')
 
 
         # Discretize
         if self.discretization in ["zoh"]:
+            # self.discretize = discretize_zoh
             self.Lambda_bar, self.B_bar = discretize_zoh(self.Lambda, self.B_tilde, self.step)
         elif self.discretization in ["bilinear"]:
+            # self.discretize = discretize_bilinear
             self.Lambda_bar, self.B_bar = discretize_bilinear(self.Lambda, self.B_tilde, self.step)
         else:
             raise NotImplementedError("Discretization method {} not implemented".format(self.discretization))
@@ -441,6 +447,7 @@ class S5Layer(keras.Model):
         print("V.shape={}".format(self.V.shape))
         print("Vinv.shape={}".format(self.Vinv.shape))
 
+    @tf.function(input_signature=[tf.TensorSpec(shape=[None, 100, 64], dtype=tf.float32)])
     def call(self, input_sequence):
         """
         Compute the LxH output of the S5 SSM given an LxH input sequence
@@ -458,21 +465,36 @@ class S5Layer(keras.Model):
                        self.bidirectional)
 
         # Add feedthrough matrix output Du;
-        Du =tf.vectorized_map(lambda u: self.D * u)(input_sequence)
+        Du =tf.vectorized_map(lambda u: self.D * u, input_sequence)
         return ys + Du
 
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'
-os.environ['TF_GPU_ALLOCATOR']='cuda_malloc_async'
-gpus = tf.config.list_physical_devices('GPU')
-if gpus:
-    try:
-        # Currently, memory growth needs to be the same across GPUs
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-        logical_gpus = tf.config.list_logical_devices('GPU')
-        print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-    except RuntimeError as e:
-        # Memory growth must be set before GPUs have been initialized
-        print(e)
-s5_layer = S5Layer()
+# import os
+# os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+# os.environ['TF_GPU_ALLOCATOR']='cuda_malloc_async'
+# gpus = tf.config.list_physical_devices('GPU')
+# if gpus:
+#     try:
+#         # Currently, memory growth needs to be the same across GPUs
+#         for gpu in gpus:
+#             tf.config.experimental.set_memory_growth(gpu, True)
+#         logical_gpus = tf.config.list_logical_devices('GPU')
+#         print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+#     except RuntimeError as e:
+#         # Memory growth must be set before GPUs have been initialized
+#         print(e)
+# import numpy as np
+#
+# all_data = np.load('../../datasets/Mujoco/train_mujoco.npy')
+# all_data = np.array(all_data)
+# training_data = tf.convert_to_tensor(all_data[:64]) # B L K
+# # training_data = rearrange(' b l k -> b k l', training_data)
+# input_projectstion = diffusion_projection = keras.layers.Dense(64)
+# s5_layer = S5Layer()
+# # Seq_layer = keras.Sequential()
+# # Seq_layer.add(keras.layers.Input(shape=(None, 100, 14), dtype=tf.float32))
+# # Seq_layer.add(input_projectstion)
+# # Seq_layer.add(s5_layer)
+# # Seq_layer(training_data)
+# out1 = input_projectstion(training_data)
+# out = s5_layer.call(out1)
+#
