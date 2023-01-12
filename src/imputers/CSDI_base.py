@@ -6,8 +6,10 @@ import math
 from einops import rearrange
 # from .Encoder_keras import Encoder
 import tensorflow_models as tfm
+
 from .S4Model import S4Layer
 from .S5Model import S5Layer
+from src.utils.util import SetLearningRate
 
 
 def quantile_loss(target, forecast, q: tf.float32, eval_points) -> tf.float32:
@@ -346,6 +348,7 @@ class ResidualBlock(keras.layers.Layer):
             self.time_layer = S4Layer(features=channels, lmax=100)
         elif time_layer == 'S5':
             self.time_layer = S5Layer(features=channels)
+            # self.time_layer = SetLearningRate(self.time_layer, 0.05, True)
         self.feature_layer = keras.Sequential()
         self.feature_layer.add(keras.layers.Input((None, channels)))
         self.feature_layer.add(tfm.nlp.models.TransformerEncoder(num_layers=1,

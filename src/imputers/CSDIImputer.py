@@ -1,5 +1,5 @@
 import numpy as np
-
+import tensorflow_addons as tfa
 from .CSDI import *
 import matplotlib.pyplot as plt
 import os
@@ -15,7 +15,7 @@ class CSDIImputer:
               missing_ratio_or_k=0.1,
               epochs=50,
               batch_size=64,
-              lr=2.0e-4,
+              lr=1.0e-3,
               layers=4,
               channels=64,
               nheads=8,
@@ -192,7 +192,11 @@ class CSDIImputer:
         values = [self.lr, self.lr * 0.1, self.lr * 0.1 * 0.1]
 
         learning_rate_fn = keras.optimizers.schedules.PiecewiseConstantDecay(boundaries, values)
-        optimizer = keras.optimizers.Adam(learning_rate=learning_rate_fn, epsilon=1e-6, clipnorm=0.5)
+        optimizer = keras.optimizers.Adam(learning_rate=learning_rate_fn, epsilon=1e-6) #, clipnorm=0.5)
+        # TODO multi optimizer for S5
+        # optimizer1 =  keras.optimizers.Adam(learning_rate=1e-4, epsilon=1e-6)
+        # time_layers = [self.model.diffmodel.residual_layers[i].time_layer for i in range(len(self.model.diffmodel.residual_layers[i]))]
+        # optimizers_and_layers = [(optimizer0, ), (optimizer1, time_layers)]
         # define callback
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=self.log_path, histogram_freq=1)
         earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=10)
@@ -248,7 +252,7 @@ class CSDIImputer:
                                                 ])
 
             plt.plot(history.history["loss"], c='blue')
-            plt.plot(history.history["val_loss"], c='orange')
+            # plt.plot(history.history["val_loss"], c='orange')
             plt.grid()
             plt.title("Loss")
             plt.savefig(self.log_path + '/loss.png')
