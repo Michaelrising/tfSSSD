@@ -4,6 +4,13 @@ import tensorflow_probability as tfp
 from tensorflow import keras
 from einops import rearrange
 
+
+def my_scan(func):
+    def wrapper(L, B):
+        return lambda: tf.scan(func, (L, B), parallel_iterations=100)
+    return wrapper
+
+
 def make_HiPPO(N):
     """ Create a HiPPO-LegS matrix.
         From https://github.com/srush/annotated-s4/blob/main/s4/s4.py
@@ -464,25 +471,17 @@ class S5Layer(keras.layers.Layer):
         Lambda_bar = tf.complex(tf.exp(self.Lambda_re * self.step) * tf.math.cos(self.Lambda_im * self.step), tf.exp(self.Lambda_re * self.step) * tf.math.sin(self.Lambda_im * self.step))
         B_bar = tf.expand_dims(tf.math.divide(1., tf.complex(self.Lambda_re, self.Lambda_im)) * (Lambda_bar - Identity), -1) * tf.complex(self.B[..., 0], self.B[..., 1])
 
-        # Lambda_elements = Lambda_bar * tf.cast(
-        #     tf.ones(shape=[tf.shape(input_sequence)[0], tf.shape(input_sequence)[1], Lambda_bar.shape[0]]),
-        #     dtype=Lambda_bar.dtype)  # B L P
         ones_elems = tf.cast(tf.ones(shape=[tf.shape(input_sequence)[0], tf.shape(input_sequence)[1], Lambda_bar.shape[0]]),
             dtype=Lambda_bar.dtype)  # B L P
         Lambda_elements = tf.vectorized_map(lambda u: tf.einsum('p, l p -> l p', Lambda_bar, u), ones_elems) # B L P
 
         Bu_elements = tf.vectorized_map(lambda u: tf.einsum('p h,l h -> l p', B_bar, u),
                                         elems=tf.cast(input_sequence, dtype=Lambda_bar.dtype))  # B L P
-        # Bu_elements = tf.vectorized_map(lambda u: B_bar @ u)(input_sequence) #
 
-        # TODO scan associate reverse
-        # _, xs = tfp.math.scan_associative(fn=self.binary_operator, elems=(Lambda_elements, Bu_elements))
         scan_binary_operator = lambda X: tf.scan(self.binary_operator, (X[0], X[1]), parallel_iterations=100)
         _, xs = tf.vectorized_map(scan_binary_operator, (Lambda_elements, Bu_elements))
 
         if self.bidirectional:
-            # _, xs2 = tfp.math.scan_associative(binary_operator,
-            #                                   [Lambda_elements, Bu_elements]) # reverse=True
             reversed_scan_binary_operator = lambda X: tf.scan(self.binary_operator, (X[0], X[1]), reverse=True, parallel_iterations=100)
             _, xs2 = tf.vectorized_map(reversed_scan_binary_operator, (Lambda_elements, Bu_elements))
 

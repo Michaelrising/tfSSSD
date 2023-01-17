@@ -192,11 +192,8 @@ class CSDIImputer:
         values = [self.lr, self.lr * 0.1, self.lr * 0.1 * 0.1]
 
         learning_rate_fn = keras.optimizers.schedules.PiecewiseConstantDecay(boundaries, values)
-        optimizer = keras.optimizers.Adam(learning_rate=learning_rate_fn, epsilon=1e-6) #, clipnorm=0.5)
-        # TODO multi optimizer for S5
-        # optimizer1 =  keras.optimizers.Adam(learning_rate=1e-4, epsilon=1e-6)
-        # time_layers = [self.model.diffmodel.residual_layers[i].time_layer for i in range(len(self.model.diffmodel.residual_layers[i]))]
-        # optimizers_and_layers = [(optimizer0, ), (optimizer1, time_layers)]
+        optimizer = keras.optimizers.Adam(learning_rate=learning_rate_fn, epsilon=1e-6, amsgrad=True)
+
         # define callback
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=self.log_path, histogram_freq=1)
         earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=10)
@@ -237,22 +234,17 @@ class CSDIImputer:
 
 
         # Visualize the training progress of the model.
-        input_signature = ((tf.TensorSpec([None, 14, 100], tf.float32),
-                             tf.TensorSpec([None, 14, 100], tf.float32),
-                             tf.TensorSpec([None, 14, 100], tf.float32),
-                             tf.TensorSpec([None, 14, 100], tf.float32)),)
-
         if not infer_flag:
             self.model.compile(optimizer=optimizer)
-            history = self.model.fit(x=train_data, batch_size=self.batch_size, epochs=self.epochs,
+            history = self.model.fit(x=train_data, batch_size=self.batch_size, epochs=self.epochs, validation_split=0.1,
                                      # validation_data=(validation_data,),
                                      callbacks=[tensorboard_callback,
-                                                # earlyStop_loss_callback,
+                                                earlyStop_loss_callback,
                                                 best_checkpoint_callback
                                                 ])
 
             plt.plot(history.history["loss"], c='blue')
-            # plt.plot(history.history["val_loss"], c='orange')
+            plt.plot(history.history["val_loss"], c='orange')
             plt.grid()
             plt.title("Loss")
             plt.savefig(self.log_path + '/loss.png')
@@ -266,7 +258,7 @@ class CSDIImputer:
         #     print('==' * 10 + 'Pre Train' + '==' * 10)
         self.model.built_after_run()
         self.model.summary()
-        return train_data, validation_data # ,history
+        return train_data
 
 
     def process_data(self, train_data):
