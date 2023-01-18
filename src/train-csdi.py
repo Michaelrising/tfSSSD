@@ -4,7 +4,7 @@ from datetime import datetime
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--algo', type=str, default='S5', help='The Algorithm for imputation: transformer or S4')
+    parser.add_argument('--algo', type=str, default='Mega', help='The Algorithm for imputation: transformer or S4')
     parser.add_argument('--data', type=str, default='mujoco', help='The data set for training')
     parser.add_argument('--cuda', type=int, default=1, help='The CUDA device for training')
     parser.add_argument('--epochs', type=int, default=100, help='The number of epochs for training')

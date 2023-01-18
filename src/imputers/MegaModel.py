@@ -33,18 +33,20 @@ def conv1d_fft(x, weights, dim = -3, weight_dim = -2):
     M = weights.shape[weight_dim]
 
     fast_len = next_fast_len(N + M - 1)
-    x = tf.transpose(x) # B L K -> K L B
-    f_x = tf.signal.rfft(x, fast_len)
-    f_x = tf.transpose(f_x) # K L B -> B L K
+    x = rearrange(x, 'b l j k -> b j k l')
+    f_x = tf.signal.rfft(x, fft_length=[fast_len])
+    f_x = rearrange(f_x, 'b j k l-> b l j k')
 
     weights = rearrange(weights, '... j i -> ... i j')
-    f_weight = tf.signal.rfft(weights, fast_len)
+    f_weight = tf.signal.rfft(weights, fft_length=[fast_len])
     f_weight = rearrange(f_weight, '... j i -> ... i j')
 
     f_v_weight = f_x * append_dims(tf.math.conj(f_weight), weight_dim - dim)
-    out = tf.signal.irfft(tf.transpose(f_v_weight), fast_len)
-    out = tf.transpose(out)
-    out = tf.roll(out, -1, axis=(dim,))
+
+    f_v_weight = rearrange(f_v_weight, 'b l j k -> b j k l')
+    out = tf.signal.irfft(f_v_weight, fft_length=[fast_len])
+    out = rearrange(out, 'b j k l-> b l j k')
+    out = tf.roll(out, -1, axis=(dim,)) # TODO roll has error see debug msgs
 
     indices = tf.range(start=fast_len - N, limit=fast_len, dtype=tf.int32)
     out = tf.gather(out, indices=indices, axis=dim)
@@ -115,8 +117,8 @@ class LaplacianAttnFn(keras.layers.Layer):
 class OffsetScale(keras.layers.Layer):
     def __init__(self, dim, heads = 1):
         super().__init__()
-        self.gamma = tf.Variable(tf.ones(heads, dim), name='gamma')
-        self.beta =  tf.Variable(tf.zeros(heads, dim), name='beta')
+        self.gamma = tf.Variable(tf.ones(shape=[heads, dim]), name='gamma')
+        self.beta =  tf.Variable(tf.zeros(shape=[heads, dim]), name='beta')
         initializer = tf.keras.initializers.RandomNormal(mean=0., stddev= 0.02)
         self.gamma.assign(initializer(shape=[heads, dim]))
 
@@ -128,7 +130,6 @@ class OffsetScale(keras.layers.Layer):
 class SingleHeadedAttention(keras.layers.Layer):
     def __init__(
         self,
-        *,
         dim,
         dim_qk,
         dim_value,
@@ -139,22 +140,22 @@ class SingleHeadedAttention(keras.layers.Layer):
         self.causal = causal
         self.laplacian_attn_fn = laplacian_attn_fn
 
-        self.attn_fn = partial(tf.nn.softmax, axis = -1) if not laplacian_attn_fn else LaplacianAttnFn()
+        self.attn_fn = partial(tf.nn.softmax, axis = -1) if not laplacian_attn_fn else LaplacianAttnFn
 
         self.rel_pos_bias = T5RelativePositionBias(causal = causal, scale = dim_qk ** 0.5)
 
         self.to_qk = keras.Sequential([
             keras.layers.Input(shape=(dim)),
-            keras.layers.Dense(dim_qk),
-            keras.activations.swish()]
+            keras.layers.Dense(dim_qk, activation=keras.activations.swish)
+            ]
         )
 
         self.offsetscale = OffsetScale(dim_qk, heads = 2)
 
         self.to_v = keras.Sequential([
             keras.layers.Input(shape=(dim)),
-            keras.layers.Dense(dim_value),
-            keras.activations.swish()]
+            keras.layers.Dense(dim_value, activation=keras.activations.swish),
+            ]
         )
 
     def call(self, x, v_input = None):
@@ -192,7 +193,6 @@ class SingleHeadedAttention(keras.layers.Layer):
 class MultiHeadedEMA(keras.layers.Layer):
     def __init__(
         self,
-        *,
         dim,
         heads,
         bidirectional = False,
@@ -206,12 +206,12 @@ class MultiHeadedEMA(keras.layers.Layer):
 
         # learned alpha and dampening factors
 
-        self.alphas = tf.Variable(tf.random.normal(heads, dtype=tf.float32), name='alphas')
-        self.dampen_factors = tf.Variable(tf.random.normal(heads, dtype=tf.float32), name='dampen_factors')
+        self.alphas = tf.Variable(tf.random.normal(shape=(heads,), dtype=tf.float32), name='alphas')
+        self.dampen_factors = tf.Variable(tf.random.normal(shape=(heads,), dtype=tf.float32), name='dampen_factors')
 
         if bidirectional:
-            self.reverse_alphas = tf.Variable(tf.random.normal(heads, dtype=tf.float32), name='reverse_alphas')
-            self.reverse_dampen_factors = tf.Variable(tf.random.normal(heads, dtype=tf.float32), name='reverse_dampen_factors')
+            self.reverse_alphas = tf.Variable(tf.random.normal(shape=(heads,), dtype=tf.float32), name='reverse_alphas')
+            self.reverse_dampen_factors = tf.Variable(tf.random.normal(shape=(heads,), dtype=tf.float32), name='reverse_dampen_factors')
 
     def call(self, x):
         seq_len = x.shape[1]
@@ -231,7 +231,7 @@ class MultiHeadedEMA(keras.layers.Layer):
             alphas = tf.nn.sigmoid(alphas)
             dampen_factors = tf.nn.sigmoid(dampen_factors)
 
-            reversed_powers = tf.range(seq_len - 1, -1, -1)
+            reversed_powers = tf.cast(tf.range(seq_len - 1, -1, -1), tf.float32)
             K = alphas * (((1 - alphas) * dampen_factors) ** rearrange(reversed_powers, '... l -> ... l 1'))
 
             # conv1d fft O(nlog(n))
@@ -255,7 +255,6 @@ class MultiHeadedEMA(keras.layers.Layer):
 class MegaLayer(keras.Model):
     def __init__(
         self,
-        *,
         dim = 128,
         ema_heads = 16,
         attn_dim_qk = 64,
@@ -283,27 +282,27 @@ class MegaLayer(keras.Model):
 
         self.to_reset_gate = keras.Sequential([
             keras.layers.Input(shape=(dim,)),
-            keras.layers.Dense(attn_dim_value),
-            keras.activations.swish()]
+            keras.layers.Dense(attn_dim_value, activation=keras.activations.swish),
+            ]
         )
 
         self.to_update_gate = keras.Sequential([
             keras.layers.Input(shape=(dim,)),
-            keras.layers.Dense(dim),
-            keras.activations.sigmoid()]
+            keras.layers.Dense(dim, activation=keras.activations.sigmoid),
+            ]
         )
 
         # equation 14, for calculating H
 
-        self.Wh = tf.Variable(tf.random.normal(dim, dim), name='Wh')
-        self.Uh = tf.Variable(tf.random.normal(attn_dim_value, dim), name='Uh')
-        self.bh = tf.Variable(tf.random.normal(dim), name='bh')
+        self.Wh = tf.Variable(tf.random.normal(shape=[dim, dim]), name='Wh')
+        self.Uh = tf.Variable(tf.random.normal(shape=[attn_dim_value, dim]), name='Uh')
+        self.bh = tf.Variable(tf.random.normal(shape=(dim,)), name='bh')
 
     def call(self, x, residual = None):
         residual = default(residual, x)
 
-        ema_output = self.multi_headed_ema(x)
-        attn_output = self.single_headed_attn(ema_output, x)
+        ema_output = self.multi_headed_ema.call(x)
+        attn_output = self.single_headed_attn.call(ema_output, x)
 
         reset_gate = self.to_reset_gate(ema_output)
         update_gate = self.to_update_gate(ema_output)
@@ -324,8 +323,7 @@ def FeedForward(dim, ff_mult):
     dim_hidden = int(dim * ff_mult)
     return keras.Sequential([
         keras.layers.Input(shape=(dim,)),
-        keras.layers.Dense(dim_hidden),
-        keras.activations.gelu(),
+        keras.layers.Dense(dim_hidden, activation=keras.activations.gelu),
         keras.layers.Dense(dim)
     ])
 
@@ -333,46 +331,40 @@ def FeedForward(dim, ff_mult):
 class Mega(keras.Model):
     def __init__(
         self,
-        *,
-        dim,
-        num_tokens,
+        features, # original name is dim
+        # num_tokens,
         depth,
         ff_mult = 2,
         pre_norm = False,
         **kwargs
     ):
         super().__init__()
-        self.token_emb = keras.layers.Embedding(num_tokens, dim)
+        # self.token_emb = keras.layers.Embedding(num_tokens, dim)
         self.pre_norm = pre_norm
 
-        self.layers = []
+        self.mega_layers = []
         for _ in range(depth):
-            self.layers.append(keras.Sequential([
-                MegaLayer(dim = dim, **kwargs),
-                keras.layers.LayerNormalization(dim),
-                FeedForward(dim = dim, ff_mult = ff_mult),
-                keras.layers.LayerNormalization(dim),
-            ]))
+            self.mega_layers.append([
+                MegaLayer(dim = features, **kwargs),
+                keras.layers.LayerNormalization(features),
+                FeedForward(dim = features, ff_mult = ff_mult),
+                keras.layers.LayerNormalization(features),
+            ])
 
-        # self.to_logits = keras.Sequential([
-        #     keras.layers.LayerNormalization(dim) if pre_norm else tf.identity(),
-        #     keras.layers.Dense(num_tokens)
-        # ])
-
-    def forward(self, x):
+    def call(self, x):
         pre_norm = self.pre_norm
         post_norm = not self.pre_norm
 
-        x = self.token_emb(x)
+        # x = self.token_emb(x)
 
-        for mega_layer, mega_norm, ff, ff_norm in self.layers:
+        for mega_layer, mega_norm, ff, ff_norm in self.mega_layers:
             mega_maybe_prenorm = mega_norm if pre_norm else identity
             ff_maybe_prenorm = ff_norm if pre_norm else identity
 
             mega_maybe_postnorm = mega_norm if post_norm else identity
             ff_maybe_postnorm = ff_norm if post_norm else identity
 
-            x = mega_layer(mega_maybe_prenorm(x), x)
+            x = mega_layer.call(mega_maybe_prenorm(x), x)
 
             x = mega_maybe_postnorm(x)
 
@@ -381,3 +373,4 @@ class Mega(keras.Model):
             x = ff_maybe_postnorm(x)
 
         return x
+

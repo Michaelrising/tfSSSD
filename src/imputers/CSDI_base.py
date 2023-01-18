@@ -9,6 +9,7 @@ import tensorflow_models as tfm
 
 from .S4Model import S4Layer
 from .S5Model import S5Layer
+from .MegaModel import Mega
 from src.utils.util import SetLearningRate
 
 
@@ -245,7 +246,7 @@ class DiffusionEmbedding(keras.layers.Layer):
         self.projection.add(keras.layers.Dense(projection_dim, activation=swish))
         self.projection.add(keras.layers.Dense(projection_dim, activation=swish))
 
-    @tf.function
+    # @tf.function
     def call(self, t, training=True):
         x = tf.gather(self.embedding, t)
         x = self.projection(x)
@@ -295,9 +296,9 @@ class diff_CSDI(keras.Model): #layers.Layer
             if self.algo == 'S4':
                 self.residual_layers[i].time_layer.built_after_run()
 
-    @tf.function(input_signature=[(tf.TensorSpec([None,2, 14, 100], tf.float32),
-                                   tf.TensorSpec([None, 145, 14, 100], tf.float32),
-                                   tf.TensorSpec([None], tf.int32))])
+    # @tf.function(input_signature=[(tf.TensorSpec([None,2, 14, 100], tf.float32),
+    #                                tf.TensorSpec([None, 145, 14, 100], tf.float32),
+    #                                tf.TensorSpec([None], tf.int32))])
     def call(self, batch):
         x, cond_info, t = batch
         B, inputdim, K, L = x.shape
@@ -309,7 +310,7 @@ class diff_CSDI(keras.Model): #layers.Layer
 
         skip = tf.TensorArray(dtype=tf.float32, size=len(self.residual_layers))
         for i, layer in enumerate(self.residual_layers):
-            x, skip_connection = layer((x, cond_info, diffusion_emb))
+            x, skip_connection = layer.call((x, cond_info, diffusion_emb))
             skip = skip.write(i, skip_connection) #.mark_used() #
 
         x = tf.reduce_sum(skip.stack(), axis=0) / tf.math.sqrt(float(len(self.residual_layers)))
@@ -344,11 +345,11 @@ class ResidualBlock(keras.layers.Layer):
                                                                   activation='gelu',
                                                                   use_bias = True)) # (batch_size, input_length, hidden_size)
         elif time_layer=='S4':
-            # TODO determine S4 input shape
             self.time_layer = S4Layer(features=channels, lmax=100)
         elif time_layer == 'S5':
             self.time_layer = S5Layer(features=channels)
-            # self.time_layer = SetLearningRate(self.time_layer, 0.05, True)
+        elif time_layer == 'Mega':
+            self.time_layer = Mega(features=channels, depth=2)
         self.feature_layer = keras.Sequential()
         self.feature_layer.add(keras.layers.Input((None, channels)))
         self.feature_layer.add(tfm.nlp.models.TransformerEncoder(num_layers=1,
@@ -365,12 +366,12 @@ class ResidualBlock(keras.layers.Layer):
         if L == 1:
             return y
         y = rearrange(y, '... c (k l) -> ... k c l', k=K) # b k c l
-        if self.time_layer_type=='transformer' or self.time_layer_type=='S5':
+        if self.time_layer_type == 'transformer' or self.time_layer_type == 'S5' or self.time_layer_type == 'Mega':
             y = rearrange(y, ' b k c l ->  (b k) l c') # in torch version, batch_first is False so it transposes input as L B C but we dont need to do here
-            y = self.time_layer(y) # output is bk l c
+            y = self.time_layer.call(y) # output is bk l c
             y = rearrange(y, '(b k) l c -> b (k l) c', k=K) # transpose to b k l c
             y = rearrange(y, 'b (k l) c -> b c (k l)', k=K)  # b c (k l)
-        else:
+        elif self.time_layer_type == 'S4':
             y = rearrange(y, ' b k c l -> (b k) c l') # batch feature length
             y = self.time_layer(y)  # bk, c, l -> bk, l, c
             y = rearrange(y, '(b k) l c -> b c (k l)', k=K)  # b c k l
@@ -389,7 +390,7 @@ class ResidualBlock(keras.layers.Layer):
         y = rearrange(y, ' b l k c -> b c (k l)', l=L)
         return y
 
-    @tf.function
+    # @tf.function
     def call(self, batch):
         x, cond_info, diffusion_emb = batch
         B, channel, K, L = x.shape
