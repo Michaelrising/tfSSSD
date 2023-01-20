@@ -216,19 +216,19 @@ class CSDIImputer:
             validation_data = self.process_data(validation_data)
         else:
             validation_data = None
-        self.model.compile(optimizer=optimizer)
-        pre_run_data = series[:self.batch_size]
-        pre_run_data = TrainDataset(pre_run_data, missing_ratio_or_k=0.1, masking='rm')
-        pre_run_data = self.process_data(pre_run_data)
-        print('=='*10 + 'Pre Train' + '=='*10)
-        logdir = self.log_path + "/trace_log"
-        writer = tf.summary.create_file_writer(logdir)
-        tf.summary.trace_on(graph=True, profiler=True)
-        # Forward pass
-        self.model.fit(x=pre_run_data, batch_size=self.batch_size, epochs=1)
-        with writer.as_default():
-            tf.summary.trace_export(name="model_trace", step=0, profiler_outdir=logdir)
-        print('==' * 10 + 'Pre Train' + '==' * 10)
+        # self.model.compile(optimizer=optimizer)
+        # pre_run_data = series[:self.batch_size]
+        # pre_run_data = TrainDataset(pre_run_data, missing_ratio_or_k=0.1, masking='rm')
+        # pre_run_data = self.process_data(pre_run_data)
+        # print('=='*10 + 'Pre Train' + '=='*10)
+        # logdir = self.log_path + "/trace_log"
+        # writer = tf.summary.create_file_writer(logdir)
+        # tf.summary.trace_on(graph=True, profiler=True)
+        # # Forward pass
+        # self.model.fit(x=pre_run_data, batch_size=self.batch_size, epochs=1)
+        # with writer.as_default():
+        #     tf.summary.trace_export(name="model_trace", step=0, profiler_outdir=logdir)
+        # print('==' * 10 + 'Pre Train' + '==' * 10)
         # self.model.built_after_run()
         # self.model.summary()
 

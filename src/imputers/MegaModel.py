@@ -4,6 +4,7 @@ import tensorflow as tf
 from tensorflow import keras
 from einops import rearrange
 from scipy.fftpack import next_fast_len
+import numpy as np
 
 # functions
 
@@ -24,6 +25,7 @@ def append_dims(x, num_dims):
         return x
     return tf.reshape(x, (*x.shape, *((1,) * num_dims)))
 
+@tf.function
 def conv1d_fft(x, weights, dim = -3, weight_dim = -2):
     # O(N log(N)) 1d convolution using some fourier trick
 
@@ -46,7 +48,7 @@ def conv1d_fft(x, weights, dim = -3, weight_dim = -2):
     f_v_weight = rearrange(f_v_weight, 'b l j k -> b j k l')
     out = tf.signal.irfft(f_v_weight, fft_length=[fast_len])
     out = rearrange(out, 'b j k l-> b l j k')
-    out = tf.roll(out, -1, axis=(dim,)) # TODO roll has error see debug msgs
+    out = tf.roll(out, -1, axis=dim)
 
     indices = tf.range(start=fast_len - N, limit=fast_len, dtype=tf.int32)
     out = tf.gather(out, indices=indices, axis=dim)
@@ -83,21 +85,23 @@ class T5RelativePositionBias(keras.layers.Layer):
             ret += (n < 0).long() * num_buckets
             n = tf.math.abs(n)
         else:
-            n = tf.math.reduce_max(n, tf.zeros_like(n))
+            n = tf.math.maximum(n, tf.zeros_like(n))
 
         max_exact = num_buckets // 2
         is_small = n < max_exact
 
         val_if_large = max_exact + (
-            tf.math.log(n.float() / max_exact) / math.log(max_distance / max_exact) * (num_buckets - max_exact)
-        ).long()
-        val_if_large = tf.math.reduce_min(val_if_large, tf.fill(tf.shape(val_if_large), num_buckets - 1))
+            tf.math.log(tf.cast(n, tf.float32) / max_exact) / math.log(max_distance / max_exact) * (num_buckets - max_exact)
+        )
+        val_if_large = tf.math.minimum(val_if_large, tf.cast(tf.fill(tf.shape(val_if_large), num_buckets - 1), dtype=tf.float32))
 
+        n = tf.cast(n, val_if_large.dtype)
         ret += tf.where(is_small, n, val_if_large)
         return ret
 
+    @tf.function
     def call(self, x):
-        i, j = x.shape[-2:] # TODO *
+        i, j = x.shape[-2:]
         q_pos = tf.range(i, dtype = tf.int32)
         k_pos = tf.range(j, dtype=tf.int32)
         rel_pos = rearrange(k_pos, 'j -> 1 j') - rearrange(q_pos, 'i -> i 1')
@@ -109,6 +113,7 @@ class T5RelativePositionBias(keras.layers.Layer):
 # classes
 
 class LaplacianAttnFn(keras.layers.Layer):
+    @tf.function
     def call(self, x):
         mu = math.sqrt(0.5)
         std = math.sqrt(0.25 * math.pi)
@@ -118,10 +123,11 @@ class OffsetScale(keras.layers.Layer):
     def __init__(self, dim, heads = 1):
         super().__init__()
         self.gamma = tf.Variable(tf.ones(shape=[heads, dim]), name='gamma')
-        self.beta =  tf.Variable(tf.zeros(shape=[heads, dim]), name='beta')
+        self.beta = tf.Variable(tf.zeros(shape=[heads, dim]), name='beta')
         initializer = tf.keras.initializers.RandomNormal(mean=0., stddev= 0.02)
         self.gamma.assign(initializer(shape=[heads, dim]))
 
+    @tf.function
     def call(self, x):
         out = tf.einsum('... d, h d -> ... h d', x, self.gamma) + self.beta
         return tf.unstack(out, axis=-2)
@@ -144,20 +150,13 @@ class SingleHeadedAttention(keras.layers.Layer):
 
         self.rel_pos_bias = T5RelativePositionBias(causal = causal, scale = dim_qk ** 0.5)
 
-        self.to_qk = keras.Sequential([
-            keras.layers.Input(shape=(dim)),
-            keras.layers.Dense(dim_qk, activation=keras.activations.swish)
-            ]
-        )
+        self.to_qk = keras.layers.Dense(dim_qk, activation=keras.activations.swish)
 
         self.offsetscale = OffsetScale(dim_qk, heads = 2)
 
-        self.to_v = keras.Sequential([
-            keras.layers.Input(shape=(dim)),
-            keras.layers.Dense(dim_value, activation=keras.activations.swish),
-            ]
-        )
+        self.to_v = keras.layers.Dense(dim_value, activation=keras.activations.swish)
 
+    @tf.function
     def call(self, x, v_input = None):
         seq_len, dim, dtype = *x.shape[-2:], x.dtype
 
@@ -173,20 +172,21 @@ class SingleHeadedAttention(keras.layers.Layer):
         sim = sim + self.rel_pos_bias(sim)
 
         if self.causal:
-            causal_mask = tf.ones((seq_len, seq_len), dtype = tf.bool) #.triu(1)
+            causal_mask = tf.ones((seq_len, seq_len), dtype = tf.int32) #.triu(1)
             causal_mask = tf.linalg.band_part(causal_mask, 0, -1) - tf.linalg.band_part(causal_mask, 0, 0)# upper triangle part
+            causal_mask = tf.cast(causal_mask, tf.bool)
 
         if self.causal and not self.laplacian_attn_fn:
             # is softmax attention and using large negative value pre-softmax
             # sim = sim.masked_fill(causal_mask, -torch.finfo(sim.dtype).max)
-            sim = tf.where(causal_mask, -tf.reduce_max(tf.experimental.numpy.finfo(sim.dtype)), sim)
+            sim = tf.where(causal_mask, tf.constant(-np.inf), sim)
 
         attn = self.attn_fn(sim)
 
         if self.causal and self.laplacian_attn_fn:
             # if using laplacian attention function, zero out upper triangular with 0s
             # attn = attn.masked_fill(causal_mask, 0.)
-            attn = tf.where(causal_mask, 0., attn)
+            attn = tf.where(causal_mask, tf.constant(0.), attn)
 
         return tf.einsum('b i j, b j d -> b i d', attn, v)
 
@@ -213,6 +213,7 @@ class MultiHeadedEMA(keras.layers.Layer):
             self.reverse_alphas = tf.Variable(tf.random.normal(shape=(heads,), dtype=tf.float32), name='reverse_alphas')
             self.reverse_dampen_factors = tf.Variable(tf.random.normal(shape=(heads,), dtype=tf.float32), name='reverse_dampen_factors')
 
+    @tf.function
     def call(self, x):
         seq_len = x.shape[1]
 
@@ -280,17 +281,9 @@ class MegaLayer(keras.Model):
             dim_head = ema_dim_head
         )
 
-        self.to_reset_gate = keras.Sequential([
-            keras.layers.Input(shape=(dim,)),
-            keras.layers.Dense(attn_dim_value, activation=keras.activations.swish),
-            ]
-        )
+        self.to_reset_gate = keras.layers.Dense(attn_dim_value, activation=keras.activations.swish)
 
-        self.to_update_gate = keras.Sequential([
-            keras.layers.Input(shape=(dim,)),
-            keras.layers.Dense(dim, activation=keras.activations.sigmoid),
-            ]
-        )
+        self.to_update_gate = keras.layers.Dense(dim, activation=keras.activations.sigmoid)
 
         # equation 14, for calculating H
 
@@ -298,11 +291,12 @@ class MegaLayer(keras.Model):
         self.Uh = tf.Variable(tf.random.normal(shape=[attn_dim_value, dim]), name='Uh')
         self.bh = tf.Variable(tf.random.normal(shape=(dim,)), name='bh')
 
+    @tf.function
     def call(self, x, residual = None):
         residual = default(residual, x)
 
-        ema_output = self.multi_headed_ema.call(x)
-        attn_output = self.single_headed_attn.call(ema_output, x)
+        ema_output = self.multi_headed_ema(x)
+        attn_output = self.single_headed_attn(ema_output, x)
 
         reset_gate = self.to_reset_gate(ema_output)
         update_gate = self.to_update_gate(ema_output)
@@ -322,7 +316,6 @@ class MegaLayer(keras.Model):
 def FeedForward(dim, ff_mult):
     dim_hidden = int(dim * ff_mult)
     return keras.Sequential([
-        keras.layers.Input(shape=(dim,)),
         keras.layers.Dense(dim_hidden, activation=keras.activations.gelu),
         keras.layers.Dense(dim)
     ])
@@ -346,11 +339,12 @@ class Mega(keras.Model):
         for _ in range(depth):
             self.mega_layers.append([
                 MegaLayer(dim = features, **kwargs),
-                keras.layers.LayerNormalization(features),
+                keras.layers.LayerNormalization(axis=-1),
                 FeedForward(dim = features, ff_mult = ff_mult),
-                keras.layers.LayerNormalization(features),
+                keras.layers.LayerNormalization(axis=-1),
             ])
 
+    @tf.function
     def call(self, x):
         pre_norm = self.pre_norm
         post_norm = not self.pre_norm
@@ -364,7 +358,7 @@ class Mega(keras.Model):
             mega_maybe_postnorm = mega_norm if post_norm else identity
             ff_maybe_postnorm = ff_norm if post_norm else identity
 
-            x = mega_layer.call(mega_maybe_prenorm(x), x)
+            x = mega_layer(mega_maybe_prenorm(x), x)
 
             x = mega_maybe_postnorm(x)
 
