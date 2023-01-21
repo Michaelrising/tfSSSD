@@ -99,7 +99,7 @@ class T5RelativePositionBias(keras.layers.Layer):
         ret += tf.where(is_small, n, val_if_large)
         return ret
 
-    @tf.function
+    # @tf.function
     def call(self, x):
         i, j = x.shape[-2:]
         q_pos = tf.range(i, dtype = tf.int32)
@@ -139,12 +139,14 @@ class SingleHeadedAttention(keras.layers.Layer):
         dim,
         dim_qk,
         dim_value,
+        chunk_size=-1,
         causal = False,
         laplacian_attn_fn = False
     ):
         super().__init__()
         self.causal = causal
         self.laplacian_attn_fn = laplacian_attn_fn
+        self.chunk_size = chunk_size
 
         self.attn_fn = partial(tf.nn.softmax, axis = -1) if not laplacian_attn_fn else LaplacianAttnFn
 
@@ -156,7 +158,7 @@ class SingleHeadedAttention(keras.layers.Layer):
 
         self.to_v = keras.layers.Dense(dim_value, activation=keras.activations.swish)
 
-    @tf.function
+    # @tf.function
     def call(self, x, v_input = None):
         seq_len, dim, dtype = *x.shape[-2:], x.dtype
 
@@ -165,14 +167,35 @@ class SingleHeadedAttention(keras.layers.Layer):
         qk, v = self.to_qk(x), self.to_v(v_input)
         q, k = self.offsetscale(qk)
 
+        q = tf.expand_dims(q, 1)  # (B 1 L Z)
+        k = tf.expand_dims(k, 1)  # (B 1 L Z)
+        v = tf.expand_dims(v, 1)  # (B 1 L Z)
+        if self.chunk_size < 0:
+            pass
+        else:
+            if seq_len < self.chunk_size:
+                pass
+            else:
+                q = rearrange(q, 'b 1 (k c) z -> b k c z', c=self.chunk_size)
+
+            l_ctx = tf.shape(k)[2]  # Transcribed from orig, why is this not the same as L?
+            if seq_len < self.chunk_size:
+                pass
+            else:
+                k = rearrange(k, 'b 1 (k c) z -> b k c z', c=self.chunk_size)
+                v = rearrange(v, 'b 1 (k c) z -> b k c z', c=self.chunk_size)
+
         scale = (seq_len ** -1) if self.laplacian_attn_fn else (dim ** -0.5)
 
-        sim = tf.einsum('b i d, b j d -> b i j', q, k) * scale
+        sim = tf.einsum('b k i z, b k j z -> b k i j', q, k) * scale # B K C C or B 1 L L where L = K * C
 
-        sim = sim + self.rel_pos_bias(sim)
+        sim = sim + self.rel_pos_bias.call(sim)
 
         if self.causal:
-            causal_mask = tf.ones((seq_len, seq_len), dtype = tf.int32) #.triu(1)
+            if self.chunk_size < 0:
+                causal_mask = tf.ones((seq_len, seq_len), dtype = tf.int32) #.triu(1)
+            else:
+                causal_mask = tf.ones((self.chunk_size, self.chunk_size), dtype=tf.int32)  # .triu(1)
             causal_mask = tf.linalg.band_part(causal_mask, 0, -1) - tf.linalg.band_part(causal_mask, 0, 0)# upper triangle part
             causal_mask = tf.cast(causal_mask, tf.bool)
 
@@ -181,14 +204,16 @@ class SingleHeadedAttention(keras.layers.Layer):
             # sim = sim.masked_fill(causal_mask, -torch.finfo(sim.dtype).max)
             sim = tf.where(causal_mask, tf.constant(-np.inf), sim)
 
-        attn = self.attn_fn(sim)
+        attn = self.attn_fn(sim) # B K C C or B L L where L = K * C
 
         if self.causal and self.laplacian_attn_fn:
             # if using laplacian attention function, zero out upper triangular with 0s
             # attn = attn.masked_fill(causal_mask, 0.)
             attn = tf.where(causal_mask, tf.constant(0.), attn)
+        out = tf.einsum('... i j, ... j z -> ... i z', attn, v) # B K C Z
+        out = rearrange(out, 'b k c z -> b (k c) z')
+        return out
 
-        return tf.einsum('b i j, b j d -> b i d', attn, v)
 
 class MultiHeadedEMA(keras.layers.Layer):
     def __init__(
@@ -260,16 +285,19 @@ class MegaLayer(keras.Model):
         ema_heads = 16,
         attn_dim_qk = 64,
         attn_dim_value = 256,
+        chunk_size=-1,
         laplacian_attn_fn = False,
         causal = True,
         ema_dim_head = None
     ):
         super().__init__()
+        self.chunk_size = chunk_size
 
         self.single_headed_attn = SingleHeadedAttention(
             dim = dim,
             dim_qk = attn_dim_qk,
             dim_value = attn_dim_value,
+            chunk_size = chunk_size,
             causal = causal,
             laplacian_attn_fn = laplacian_attn_fn
         )
@@ -291,12 +319,12 @@ class MegaLayer(keras.Model):
         self.Uh = tf.Variable(tf.random.normal(shape=[attn_dim_value, dim]), name='Uh')
         self.bh = tf.Variable(tf.random.normal(shape=(dim,)), name='bh')
 
-    @tf.function
+    # @tf.function
     def call(self, x, residual = None):
         residual = default(residual, x)
 
         ema_output = self.multi_headed_ema(x)
-        attn_output = self.single_headed_attn(ema_output, x)
+        attn_output = self.single_headed_attn.call(ema_output, x)
 
         reset_gate = self.to_reset_gate(ema_output)
         update_gate = self.to_update_gate(ema_output)
@@ -327,6 +355,7 @@ class Mega(keras.Model):
         features, # original name is dim
         # num_tokens,
         depth,
+        chunk_size=-1,
         ff_mult = 2,
         pre_norm = False,
         **kwargs
@@ -338,13 +367,13 @@ class Mega(keras.Model):
         self.mega_layers = []
         for _ in range(depth):
             self.mega_layers.append([
-                MegaLayer(dim = features, **kwargs),
+                MegaLayer(dim = features, chunk_size=chunk_size, **kwargs),
                 keras.layers.LayerNormalization(axis=-1),
                 FeedForward(dim = features, ff_mult = ff_mult),
                 keras.layers.LayerNormalization(axis=-1),
             ])
 
-    @tf.function
+    # @tf.function
     def call(self, x):
         pre_norm = self.pre_norm
         post_norm = not self.pre_norm
@@ -358,7 +387,7 @@ class Mega(keras.Model):
             mega_maybe_postnorm = mega_norm if post_norm else identity
             ff_maybe_postnorm = ff_norm if post_norm else identity
 
-            x = mega_layer(mega_maybe_prenorm(x), x)
+            x = mega_layer.call(mega_maybe_prenorm(x), x)
 
             x = mega_maybe_postnorm(x)
 

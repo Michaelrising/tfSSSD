@@ -349,7 +349,7 @@ class ResidualBlock(keras.layers.Layer):
         elif time_layer == 'S5':
             self.time_layer = S5Layer(features=channels)
         elif time_layer == 'Mega':
-            self.time_layer = Mega(features=channels, depth=1)
+            self.time_layer = Mega(features=channels, depth=1, chunk_size=5)
         self.feature_layer = keras.Sequential()
         self.feature_layer.add(keras.layers.Input((None, channels)))
         self.feature_layer.add(tfm.nlp.models.TransformerEncoder(num_layers=1,
