@@ -158,7 +158,7 @@ class SingleHeadedAttention(keras.layers.Layer):
 
         self.to_v = keras.layers.Dense(dim_value, activation=keras.activations.swish)
 
-    # @tf.function
+    @tf.function
     def call(self, x, v_input = None):
         seq_len, dim, dtype = *x.shape[-2:], x.dtype
 
@@ -189,7 +189,7 @@ class SingleHeadedAttention(keras.layers.Layer):
 
         sim = tf.einsum('b k i z, b k j z -> b k i j', q, k) * scale # B K C C or B 1 L L where L = K * C
 
-        sim = sim + self.rel_pos_bias.call(sim)
+        sim = sim + self.rel_pos_bias(sim)
 
         if self.causal:
             if self.chunk_size < 0:
@@ -319,12 +319,12 @@ class MegaLayer(keras.Model):
         self.Uh = tf.Variable(tf.random.normal(shape=[attn_dim_value, dim]), name='Uh')
         self.bh = tf.Variable(tf.random.normal(shape=(dim,)), name='bh')
 
-    # @tf.function
+    @tf.function
     def call(self, x, residual = None):
         residual = default(residual, x)
 
         ema_output = self.multi_headed_ema(x)
-        attn_output = self.single_headed_attn.call(ema_output, x)
+        attn_output = self.single_headed_attn(ema_output, x)
 
         reset_gate = self.to_reset_gate(ema_output)
         update_gate = self.to_update_gate(ema_output)
@@ -373,7 +373,7 @@ class Mega(keras.Model):
                 keras.layers.LayerNormalization(axis=-1),
             ])
 
-    # @tf.function
+    @tf.function
     def call(self, x):
         pre_norm = self.pre_norm
         post_norm = not self.pre_norm
@@ -387,7 +387,7 @@ class Mega(keras.Model):
             mega_maybe_postnorm = mega_norm if post_norm else identity
             ff_maybe_postnorm = ff_norm if post_norm else identity
 
-            x = mega_layer.call(mega_maybe_prenorm(x), x)
+            x = mega_layer(mega_maybe_prenorm(x), x)
 
             x = mega_maybe_postnorm(x)
 
