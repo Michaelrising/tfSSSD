@@ -1,13 +1,2 @@
-./datasets/Electricity/
-./datasets/Stocks/
-*.npy
-*.log
-*.pb
-./results
-./log
-*.index
-*.v2
-*.png
-*.csv
-log/mujoco/CSDI/train/
-log/mujoco/CSDI/validation/
+Electricity/
+
