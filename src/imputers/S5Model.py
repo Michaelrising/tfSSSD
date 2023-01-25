@@ -449,7 +449,7 @@ class S5Layer(keras.layers.Layer):
         print("V.shape={}".format(self.V.shape))
         print("Vinv.shape={}".format(self.Vinv.shape))
 
-    @tf.function(input_signature=[tf.TensorSpec(shape=[None, 100, 64], dtype=tf.float32)])
+    @tf.function #(input_signature=[tf.TensorSpec(shape=[None, 100, 64], dtype=tf.float32)])
     def call(self, input_sequence):
         """
         Compute the LxH output of the S5 SSM given an LxH input sequence

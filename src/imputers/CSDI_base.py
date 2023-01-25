@@ -126,8 +126,8 @@ def mask_missing_impute(data, mask):
     return observed_values, observed_masks, gt_masks
 
 
-def TrainDataset(series, missing_ratio_or_k=0.0, masking='rm'):
-    length = series.shape[1]
+def TrainDataset(series, missing_ratio_or_k=0.0, masking='rm', batch_size=None):
+    B, L, K = series.shape
     observed_values_list = []
     observed_masks_list = []
     gt_masks_list = []
@@ -138,16 +138,29 @@ def TrainDataset(series, missing_ratio_or_k=0.0, masking='rm'):
         gt_days = []
         for day in holidays:
             gt_days.append(day)
-            if day == 1:
-                gt_days.append(day+1)
-            elif day == series.shape[0] - 1:
-                gt_days.append(day - 1)
-            else:
-                gt_days.append(day - 1)
-                gt_days.append(day + 1)
+            # if day == 1:
+            #     gt_days.append(day+1)
+            # elif day == series.shape[0] - 1:
+            #     gt_days.append(day - 1)
+            # else:
+            #     gt_days.append(day - 1)
+            #     gt_days.append(day + 1)
+        # for batch that there is no holiday, we add one day as a random holiday
+        batch_splits = np.arange(0, B, batch_size)
         gt_days = np.unique(np.array(gt_days))
+        gt_batch_inds = np.unique(np.digitize(gt_days, batch_splits)) - 1
+        mask = ~np.isin(np.arange(0,batch_splits.shape[0]), gt_batch_inds)
+        not_gt_batch_inds = np.arange(0, batch_splits.shape[0])[mask]
+        for ind in not_gt_batch_inds:
+            random_day = np.random.choice(np.arange(batch_splits[ind], batch_splits[ind+1]), size=int(np.ceil(batch_size/10)), replace=False)
+            gt_days = np.append(gt_days, random_day)
+        for ind in gt_batch_inds[:-1]:
+            random_day = np.random.choice(np.arange(batch_splits[ind], batch_splits[ind + 1]))
+            gt_days = np.append(gt_days, random_day)
+        gt_days = np.unique(gt_days)
         gt_masks = observed_masks
         gt_masks[gt_days] = np.zeros_like(observed_masks[0], dtype=bool)
+        series = np.nan_to_num(series)
         observed_values_tensor = tf.convert_to_tensor(series.astype('float32'))
         observed_masks_tensor = tf.convert_to_tensor(observed_masks.astype('float32'))
         gt_mask_tensor = tf.convert_to_tensor(gt_masks.astype('float32'))
@@ -246,7 +259,7 @@ class DiffusionEmbedding(keras.layers.Layer):
         self.projection.add(keras.layers.Dense(projection_dim, activation=swish))
         self.projection.add(keras.layers.Dense(projection_dim, activation=swish))
 
-    # @tf.function
+    @tf.function
     def call(self, t, training=True):
         x = tf.gather(self.embedding, t)
         x = self.projection(x)
@@ -296,9 +309,9 @@ class diff_CSDI(keras.Model): #layers.Layer
             if self.algo == 'S4':
                 self.residual_layers[i].time_layer.built_after_run()
 
-    # @tf.function(input_signature=[(tf.TensorSpec([None, 2, 6, 29], tf.float32),
-    #                                tf.TensorSpec([None, 145, 6, 29], tf.float32),
-    #                                tf.TensorSpec([None], tf.int32))])
+    @tf.function(input_signature=[(tf.TensorSpec([None, 2, 6, 29], tf.float32),
+                                   tf.TensorSpec([None, 145, 6, 29], tf.float32),
+                                   tf.TensorSpec([None], tf.int32))])
     def call(self, batch):
         x, cond_info, t = batch
         B, inputdim, K, L = x.shape
@@ -310,7 +323,7 @@ class diff_CSDI(keras.Model): #layers.Layer
 
         skip = tf.TensorArray(dtype=tf.float32, size=len(self.residual_layers))
         for i, layer in enumerate(self.residual_layers):
-            x, skip_connection = layer.call((x, cond_info, diffusion_emb))
+            x, skip_connection = layer((x, cond_info, diffusion_emb))
             skip = skip.write(i, skip_connection) #.mark_used() #
 
         x = tf.reduce_sum(skip.stack(), axis=0) / tf.math.sqrt(float(len(self.residual_layers)))
@@ -349,7 +362,7 @@ class ResidualBlock(keras.layers.Layer):
         elif time_layer == 'S5':
             self.time_layer = S5Layer(features=channels)
         elif time_layer == 'Mega':
-            self.time_layer = Mega(features=channels, depth=1, chunk_size=5)
+            self.time_layer = Mega(features=channels, depth=1, chunk_size=-1)
         self.feature_layer = keras.Sequential()
         self.feature_layer.add(keras.layers.Input((None, channels)))
         self.feature_layer.add(tfm.nlp.models.TransformerEncoder(num_layers=1,
@@ -368,12 +381,12 @@ class ResidualBlock(keras.layers.Layer):
         y = rearrange(y, '... c (k l) -> ... k c l', k=K) # b k c l
         if self.time_layer_type == 'transformer' or self.time_layer_type == 'S5' or self.time_layer_type == 'Mega':
             y = rearrange(y, ' b k c l ->  (b k) l c') # in torch version, batch_first is False so it transposes input as L B C but we dont need to do here
-            y = self.time_layer.call(y) # output is bk l c
+            y = self.time_layer(y) # output is bk l c
             y = rearrange(y, '(b k) l c -> b (k l) c', k=K) # transpose to b k l c
             y = rearrange(y, 'b (k l) c -> b c (k l)', k=K)  # b c (k l)
         elif self.time_layer_type == 'S4':
             y = rearrange(y, ' b k c l -> (b k) c l') # batch feature length
-            y = self.time_layer.call(y)  # bk, c, l -> bk, l, c
+            y = self.time_layer(y)  # bk, c, l -> bk, l, c
             y = rearrange(y, '(b k) l c -> b c (k l)', k=K)  # b c k l
 
         return y
@@ -390,7 +403,7 @@ class ResidualBlock(keras.layers.Layer):
         y = rearrange(y, ' b l k c -> b c (k l)', l=L)
         return y
 
-    # @tf.function
+    @tf.function
     def call(self, batch):
         x, cond_info, diffusion_emb = batch
         B, channel, K, L = x.shape

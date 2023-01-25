@@ -69,7 +69,7 @@ class tfCSDI(keras.Model):
         pe_values = tf.reshape(pe_values, [tf.shape(pe_values)[0], tf.shape(pe_values)[1], d_model])  # B L 64*2
         return pe_values
 
-    # @tf.function
+    @tf.function
     def get_side_info(self, observed_tp, cond_mask):
         B, K, L = cond_mask.shape
         time_embed = self.time_embedding(observed_tp, self.emb_time_dim)  # B d_model L
@@ -88,29 +88,33 @@ class tfCSDI(keras.Model):
 
         return side_info
 
-    # @tf.function
+    @tf.function
     def call(self, inputs):
         total_input, observed_tp, cond_mask, t = inputs
         side_info = self.get_side_info(observed_tp, cond_mask)
         diff_input_batch = (total_input, side_info, t)
-        predicted = self.diffmodel.call(diff_input_batch)  # (B,K,L)
+        predicted = self.diffmodel(diff_input_batch)  # (B,K,L)
         return predicted
 
-    # @tf.function
+    @tf.function
     def compute_loss(self, observed_data, cond_mask, observed_mask, observed_tp, is_train=True, set_t=-1):
         # side_info = self.get_side_info(observed_tp, cond_mask)
-        if is_train:
-            t = tf.random.uniform(shape=(tf.shape(observed_data)[0],), minval=0, maxval=self.num_steps, dtype=tf.int32)
-        else:
-            t = tf.ones(shape=(tf.shape(observed_data)[0],), dtype=tf.int32) * set_t  #  num_steps (50) * B
-
+        # if is_train:
+        #     t = tf.random.uniform(shape=(tf.shape(observed_data)[0],), minval=0, maxval=self.num_steps, dtype=tf.int32)
+        # else:
+        #     t = tf.ones(shape=(tf.shape(observed_data)[0],), dtype=tf.int32) * set_t  #  num_steps (50) * B
+        t = tf.cond(
+            tf.constant(is_train),
+            true_fn=lambda : tf.random.uniform(shape=(tf.shape(observed_data)[0],), minval=0, maxval=self.num_steps, dtype=tf.int32),
+            false_fn=lambda : tf.ones(shape=(tf.shape(observed_data)[0],), dtype=tf.int32) * set_t
+        )
         noise = tf.random.normal(tf.shape(observed_data), dtype=observed_data.dtype)
         current_alpha = tf.gather(self.alpha_tf, t, axis=0)  # (B, 1, 1)
         noisy_data = (current_alpha ** 0.5) * observed_data + (1.0 - current_alpha) ** 0.5 * noise
 
         total_input = self.set_input_to_diffmodel(noisy_data, observed_data, cond_mask, is_train)
 
-        predicted = self.call((total_input, observed_tp, cond_mask, t)) # se
+        predicted = self((total_input, observed_tp, cond_mask, t)) # se
 
         target_mask = observed_mask - cond_mask
         residual = (noise - predicted) * target_mask
@@ -135,10 +139,10 @@ class tfCSDI(keras.Model):
 
         return total_input
 
-    # @tf.function(input_signature=[((tf.TensorSpec([None, 6, 29], tf.float32),
-    #                                 tf.TensorSpec([None, 6, 29], tf.float32),
-    #                                 tf.TensorSpec([None, 6, 29], tf.float32),
-    #                                 tf.TensorSpec([None, 6, 29], tf.float32)),)])
+    @tf.function(input_signature=[((tf.TensorSpec([None, 6, 29], tf.float32),
+                                    tf.TensorSpec([None, 6, 29], tf.float32),
+                                    tf.TensorSpec([None, 6, 29], tf.float32),
+                                    tf.TensorSpec([None, 6, 29], tf.float32)), )])
     def train_step(self, batch):
         observed_data, observed_mask, _, cond_mask = batch[0]
         # observation mask denotes the original data missing, gt_masks is manmade mask
@@ -162,11 +166,10 @@ class tfCSDI(keras.Model):
     @tf.function(input_signature=[((tf.TensorSpec([None, 6, 29], tf.float32),
                                     tf.TensorSpec([None, 6, 29], tf.float32),
                                     tf.TensorSpec([None, 6, 29], tf.float32),
-                                    tf.TensorSpec([None, 6, 29], tf.float32)),)])
+                                    tf.TensorSpec([None, 6, 29], tf.float32)), )])
     def test_step(self, batch):
-        observed_data, observed_mask, gt_mask, _ = batch[0]
+        observed_data, observed_mask, _, cond_mask = batch[0]
         # observation mask denotes the original data missing, gt_masks is man-made mask
-        cond_mask = gt_mask
         B, K, L = observed_data.shape
         observed_tp = tf.reshape(tf.range(L), [1, L])  # 1 L
         observed_tp = tf.tile(observed_tp, [tf.shape(observed_data)[0], 1])  # B, L
@@ -174,9 +177,12 @@ class tfCSDI(keras.Model):
         def body(t):
             loss = self.loss_fn(observed_data, cond_mask, observed_mask, observed_tp, is_train=False, set_t=t)
             return tf.stop_gradient(loss)
-        t = tf.range(self.num_steps)
         # @tf.function
-        LOSS_SUM = tf.map_fn(body, elems=t, parallel_iterations=self.num_steps, fn_output_signature=tf.TensorSpec(shape=(), dtype=tf.float32))
+        t = tf.range(self.num_steps)
+        try:
+            LOSS_SUM = tf.vectorized_map(body, elems=t) #, parallel_iterations=10,
+        except:
+            LOSS_SUM = tf.map_fn(body, elems=t, fn_output_signature=tf.TensorSpec(shape=(), dtype=tf.float32))
         val_loss = tf.reduce_sum(LOSS_SUM) / self.num_steps
         self.loss_tracker.update_state(val_loss)
         return {"loss": self.loss_tracker.result()}

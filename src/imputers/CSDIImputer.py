@@ -15,7 +15,7 @@ class CSDIImputer:
               missing_ratio_or_k=0.1,
               epochs=50,
               batch_size=64,
-              lr=1.0e-3,
+              lr=5.0e-4,
               layers=4,
               channels=64,
               nheads=8,
@@ -29,7 +29,8 @@ class CSDIImputer:
               timeemb=128,
               featureemb=16,
               target_strategy='random',
-                 ):
+              amsgrad=False
+            ):
 
         '''
 
@@ -67,6 +68,7 @@ class CSDIImputer:
         self.epochs = epochs
         self.lr = lr
         self.missing_ratio_or_k = missing_ratio_or_k
+        self.amsgrad=amsgrad
 
         self.config = {}
 
@@ -192,7 +194,7 @@ class CSDIImputer:
         values = [self.lr, self.lr * 0.1, self.lr * 0.1 * 0.1]
 
         learning_rate_fn = keras.optimizers.schedules.PiecewiseConstantDecay(boundaries, values)
-        optimizer = keras.optimizers.Adam(learning_rate=learning_rate_fn, epsilon=1e-6, amsgrad=True)
+        optimizer = keras.optimizers.Adam(learning_rate=learning_rate_fn, epsilon=1e-6, amsgrad=self.amsgrad)
 
         # define callback
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=self.log_path, histogram_freq=1)
@@ -208,7 +210,7 @@ class CSDIImputer:
         )
         # prepare data set
         train_data = TrainDataset(series, missing_ratio_or_k=self.missing_ratio_or_k,
-                                  masking=masking)  # observed_values_tensor, observed_masks_tensor, gt_mask_tensor
+                                  masking=masking, batch_size=self.batch_size)  # observed_values_tensor, observed_masks_tensor, gt_mask_tensor
         train_data = self.process_data(train_data) # observed_data, observed_mask, gt_mask, cond_mask
         if validation_series is not None:
             validation_data = TrainDataset(validation_series, missing_ratio_or_k=self.missing_ratio_or_k,
@@ -216,21 +218,20 @@ class CSDIImputer:
             validation_data = self.process_data(validation_data)
         else:
             validation_data = None
-        self.model.compile(optimizer=optimizer)
-        pre_run_data = series[:self.batch_size]
-        pre_run_data = TrainDataset(pre_run_data, missing_ratio_or_k=0.1, masking=masking)
-        pre_run_data = self.process_data(pre_run_data)
-        print('=='*10 + 'Pre Train' + '=='*10)
-        logdir = self.log_path + "/trace_log"
-        writer = tf.summary.create_file_writer(logdir)
-        tf.summary.trace_on(graph=True, profiler=True)
-        # Forward pass
-        self.model.train_step((pre_run_data, None))
-        with writer.as_default():
-            tf.summary.trace_export(name="model_trace", step=0, profiler_outdir=logdir)
-        print('==' * 10 + 'Pre Train' + '==' * 10)
-        self.model.built_after_run()
-        self.model.summary()
+        # self.model.compile(optimizer=optimizer)
+        # pre_run_data = (train_data[0][:self.batch_size], train_data[1][:self.batch_size], train_data[2][:self.batch_size], train_data[3][:self.batch_size])
+        # print('=='*10 + 'Pre Train' + '=='*10)
+        # logdir = self.log_path + "/trace_log"
+        # writer = tf.summary.create_file_writer(logdir)
+        # tf.summary.trace_on(graph=True, profiler=True)
+        # # Forward pass
+        # self.model.train_step((pre_run_data, ))
+        # self.model.test_step((pre_run_data, ))
+        # with writer.as_default():
+        #     tf.summary.trace_export(name="model_trace", step=0, profiler_outdir=logdir)
+        # print('==' * 10 + 'Pre Train' + '==' * 10)
+        # self.model.built_after_run()
+        # self.model.summary()
 
 
         # Visualize the training progress of the model.
@@ -305,7 +306,7 @@ class CSDIImputer:
             mask_choice = np.random.rand()
             if self.config["model"]["target_strategy"] == "mix" and mask_choice > 0.5:
                 cond_mask[i] = rand_mask[i]
-            else:
+            else: # draw another sample for histmask (i-1 corresponds to another sample)
                 cond_mask[i] = cond_mask[i] * for_pattern_mask[i - 1]
         cond_mask = tf.convert_to_tensor(cond_mask)
         cond_mask = tf.cast(cond_mask, dtype=tf.float32)
