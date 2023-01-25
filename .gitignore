@@ -6,6 +6,8 @@
 ./results
 ./log
 *.index
-*.lambda-dual.737831.0.v2
+*.v2
+*.png
+*.csv
 log/mujoco/CSDI/train/
 log/mujoco/CSDI/validation/
