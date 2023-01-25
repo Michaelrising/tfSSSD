@@ -10,7 +10,7 @@ import tensorflow_models as tfm
 from .S4Model import S4Layer
 from .S5Model import S5Layer
 from .MegaModel import Mega
-from src.utils.util import SetLearningRate
+# from src.utils.util import SetLearningRate
 
 
 def quantile_loss(target, forecast, q: tf.float32, eval_points) -> tf.float32:
@@ -152,7 +152,7 @@ def TrainDataset(series, missing_ratio_or_k=0.0, masking='rm', batch_size=None):
         mask = ~np.isin(np.arange(0,batch_splits.shape[0]), gt_batch_inds)
         not_gt_batch_inds = np.arange(0, batch_splits.shape[0])[mask]
         for ind in not_gt_batch_inds:
-            random_day = np.random.choice(np.arange(batch_splits[ind], batch_splits[ind+1]), size=int(np.ceil(batch_size/10)), replace=False)
+            random_day = np.random.choice(np.arange(batch_splits[ind], batch_splits[ind+1]), size=int(np.ceil(batch_size/16)), replace=False)
             gt_days = np.append(gt_days, random_day)
         for ind in gt_batch_inds[:-1]:
             random_day = np.random.choice(np.arange(batch_splits[ind], batch_splits[ind + 1]))
@@ -362,7 +362,7 @@ class ResidualBlock(keras.layers.Layer):
         elif time_layer == 'S5':
             self.time_layer = S5Layer(features=channels)
         elif time_layer == 'Mega':
-            self.time_layer = Mega(features=channels, depth=1, chunk_size=-1)
+            self.time_layer = Mega(features=channels, depth=6, chunk_size=-1)
         self.feature_layer = keras.Sequential()
         self.feature_layer.add(keras.layers.Input((None, channels)))
         self.feature_layer.add(tfm.nlp.models.TransformerEncoder(num_layers=1,
@@ -379,12 +379,12 @@ class ResidualBlock(keras.layers.Layer):
         if L == 1:
             return y
         y = rearrange(y, '... c (k l) -> ... k c l', k=K) # b k c l
-        if self.time_layer_type == 'transformer' or self.time_layer_type == 'S5' or self.time_layer_type == 'Mega':
+        if self.time_layer_type == 'transformer':
             y = rearrange(y, ' b k c l ->  (b k) l c') # in torch version, batch_first is False so it transposes input as L B C but we dont need to do here
             y = self.time_layer(y) # output is bk l c
             y = rearrange(y, '(b k) l c -> b (k l) c', k=K) # transpose to b k l c
             y = rearrange(y, 'b (k l) c -> b c (k l)', k=K)  # b c (k l)
-        elif self.time_layer_type == 'S4':
+        elif self.time_layer_type == 'S4' or self.time_layer_type == 'S5' or self.time_layer_type == 'Mega':
             y = rearrange(y, ' b k c l -> (b k) c l') # batch feature length
             y = self.time_layer(y)  # bk, c, l -> bk, l, c
             y = rearrange(y, '(b k) l c -> b c (k l)', k=K)  # b c k l

@@ -1,0 +1,130 @@
+nohup: ignoring input
+2023-01-25 10:51:41.110280: I tensorflow/core/platform/cpu_feature_guard.cc:193] This TensorFlow binary is optimized with oneAPI Deep Neural Network Library (oneDNN) to use the following CPU instructions in performance-critical operations:  AVX2 AVX512F AVX512_VNNI FMA
+To enable them in other operations, rebuild TensorFlow with the appropriate compiler flags.
+2023-01-25 10:51:41.240326: I tensorflow/core/util/port.cc:104] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2023-01-25 10:51:41.949346: W tensorflow/compiler/xla/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libnvinfer.so.7'; dlerror: libnvinfer.so.7: cannot open shared object file: No such file or directory
+2023-01-25 10:51:41.949400: W tensorflow/compiler/xla/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libnvinfer_plugin.so.7'; dlerror: libnvinfer_plugin.so.7: cannot open shared object file: No such file or directory
+2023-01-25 10:51:41.949406: W tensorflow/compiler/tf2tensorrt/utils/py_utils.cc:38] TF-TRT Warning: Cannot dlopen some TensorRT libraries. If you would like to use Nvidia GPU with TensorRT, please make sure the missing libraries mentioned above are installed properly.
+2023-01-25 10:51:46.120486: I tensorflow/core/common_runtime/gpu/gpu_process_state.cc:222] Using CUDA malloc Async allocator for GPU: 0
+2023-01-25 10:51:46.121049: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1613] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 22242 MB memory:  -> device: 0, name: NVIDIA GeForce RTX 3090, pci bus id: 0000:1a:00.0, compute capability: 8.6
+1 Physical GPUs, 1 Logical GPUs
+Data loaded
+{
+    "train": {
+        "epochs": 200,
+        "batch_size": 64,
+        "lr": 0.0005,
+        "path_save": "../results/stocks/CSDI-Mega/20230125-105146/csdi_model"
+    },
+    "diffusion": {
+        "layers": 4,
+        "channels": 64,
+        "nheads": 8,
+        "diffusion_embedding_dim": 128,
+        "beta_start": 0.0001,
+        "beta_end": 0.5,
+        "num_steps": 50,
+        "schedule": "quad",
+        "time_layer": "Mega"
+    },
+    "model": {
+        "missing_ratio_or_k": 0.1,
+        "is_unconditional": 0,
+        "timeemb": 128,
+        "featureemb": 16,
+        "target_strategy": "holiday",
+        "masking": "holiday"
+    }
+}
+configuration file name: ./config/config_csdi_training_holiday
+Epoch 1/200
+WARNING:tensorflow:From /home/yitao/.local/lib/python3.9/site-packages/tensorflow/python/autograph/pyct/static_analysis/liveness.py:83: Analyzer.lamba_check (from tensorflow.python.autograph.pyct.static_analysis.liveness) is deprecated and will be removed after 2023-09-23.
+Instructions for updating:
+Lambda fuctions will be no more assumed to be used in the statement where they are used, or at least in the same block. https://github.com/tensorflow/tensorflow/issues/56089
+WARNING:tensorflow:From /home/yitao/.local/lib/python3.9/site-packages/tensorflow/python/autograph/pyct/static_analysis/liveness.py:83: Analyzer.lamba_check (from tensorflow.python.autograph.pyct.static_analysis.liveness) is deprecated and will be removed after 2023-09-23.
+Instructions for updating:
+Lambda fuctions will be no more assumed to be used in the statement where they are used, or at least in the same block. https://github.com/tensorflow/tensorflow/issues/56089
+2023-01-25 10:52:12.959151: W tensorflow/core/grappler/optimizers/loop_optimizer.cc:907] Skipping loop optimization for Merge node with control input: StatefulPartitionedCall/StatefulPartitionedCall/cond/branch_executed/_3812
+2023-01-25 10:52:17.311891: I tensorflow/compiler/xla/stream_executor/cuda/cuda_blas.cc:630] TensorFloat-32 will be used for the matrix multiplication. This will only be logged once.
+2023-01-25 10:52:17.923200: I tensorflow/compiler/xla/stream_executor/cuda/cuda_dnn.cc:428] Loaded cuDNN version 8202
+ 1/37 [..............................] - ETA: 28:02 - loss: 1.0055 2/37 [>.............................] - ETA: 31s - loss: 0.9803   3/37 [=>............................] - ETA: 30s - loss: 0.9949 4/37 [==>...........................] - ETA: 30s - loss: 0.7462 5/37 [===>..........................] - ETA: 28s - loss: 0.8057 6/37 [===>..........................] - ETA: 28s - loss: 0.8395 7/37 [====>.........................] - ETA: 27s - loss: 0.8487 8/37 [=====>........................] - ETA: 27s - loss: 0.8437 9/37 [======>.......................] - ETA: 27s - loss: 0.846710/37 [=======>......................] - ETA: 26s - loss: 0.857411/37 [=======>......................] - ETA: 25s - loss: 0.853712/37 [========>.....................] - ETA: 24s - loss: 0.849613/37 [=========>....................] - ETA: 23s - loss: 0.843914/37 [==========>...................] - ETA: 22s - loss: 0.843215/37 [===========>..................] - ETA: 22s - loss: 0.842716/37 [===========>..................] - ETA: 21s - loss: 0.851717/37 [============>.................] - ETA: 20s - loss: 0.837018/37 [=============>................] - ETA: 19s - loss: 0.826519/37 [==============>...............] - ETA: 18s - loss: 0.825320/37 [===============>..............] - ETA: 17s - loss: 0.784021/37 [================>.............] - ETA: 16s - loss: 0.771422/37 [================>.............] - ETA: 15s - loss: 0.757223/37 [=================>............] - ETA: 14s - loss: 0.775024/37 [==================>...........] - ETA: 13s - loss: 0.764325/37 [===================>..........] - ETA: 12s - loss: 0.750726/37 [====================>.........] - ETA: 11s - loss: 0.742927/37 [====================>.........] - ETA: 10s - loss: 0.729728/37 [=====================>........] - ETA: 9s - loss: 0.7145 29/37 [======================>.......] - ETA: 8s - loss: 0.712830/37 [=======================>......] - ETA: 7s - loss: 0.697231/37 [========================>.....] - ETA: 6s - loss: 0.683832/37 [========================>.....] - ETA: 5s - loss: 0.670633/37 [=========================>....] - ETA: 4s - loss: 0.670034/37 [==========================>...] - ETA: 3s - loss: 0.665035/37 [===========================>..] - ETA: 2s - loss: 0.646036/37 [============================>.] - ETA: 1s - loss: 0.638837/37 [==============================] - ETA: 0s - loss: 0.62642023-01-25 10:53:32.423595: W tensorflow/core/grappler/optimizers/loop_optimizer.cc:907] Skipping loop optimization for Merge node with control input: StatefulPartitionedCall/loop_body/StatefulPartitionedCall/pfor/StatefulPartitionedCall/cond/pfor/cond/branch_executed/_938
+2023-01-25 10:53:34.036714: E tensorflow/compiler/xla/stream_executor/cuda/cuda_fft.cc:274] Failed to allocate work area.
+2023-01-25 10:53:34.036772: E tensorflow/compiler/xla/stream_executor/cuda/cuda_fft.cc:455] Initialize Params: rank: 1 elem_count: 60 input_embed: 60 input_stride: 1 input_distance: 60 output_embed: 31 output_stride: 1 output_distance: 31 batch_count: 19660800
+2023-01-25 10:53:34.036778: E tensorflow/compiler/xla/stream_executor/cuda/cuda_fft.cc:464] Failed to initialize batched cufft plan with customized allocator: 
+Traceback (most recent call last):
+  File "/home/yitao/projects/tfSSSD/src/train-csdi.py", line 63, in <module>
+    train_data = CSDIImputer.train(training_data, masking=args.masking)
+  File "/home/yitao/projects/tfSSSD/src/imputers/CSDIImputer.py", line 240, in train
+    history = self.model.fit(x=train_data, batch_size=self.batch_size, epochs=self.epochs, validation_split=0.1,
+  File "/home/yitao/.local/lib/python3.9/site-packages/keras/utils/traceback_utils.py", line 70, in error_handler
+    raise e.with_traceback(filtered_tb) from None
+  File "/home/yitao/.local/lib/python3.9/site-packages/tensorflow/python/eager/execute.py", line 52, in quick_execute
+    tensors = pywrap_tfe.TFE_Py_Execute(ctx._handle, device_name, op_name,
+tensorflow.python.framework.errors_impl.InternalError: Graph execution error:
+
+Detected at node 'rfft/pfor/RFFT' defined at (most recent call last):
+    File "/home/yitao/projects/tfSSSD/src/train-csdi.py", line 63, in <module>
+      train_data = CSDIImputer.train(training_data, masking=args.masking)
+    File "/home/yitao/projects/tfSSSD/src/imputers/CSDIImputer.py", line 240, in train
+      history = self.model.fit(x=train_data, batch_size=self.batch_size, epochs=self.epochs, validation_split=0.1,
+    File "/home/yitao/.local/lib/python3.9/site-packages/keras/utils/traceback_utils.py", line 65, in error_handler
+      return fn(*args, **kwargs)
+    File "/home/yitao/.local/lib/python3.9/site-packages/keras/engine/training.py", line 1728, in fit
+      val_logs = self.evaluate(
+    File "/home/yitao/.local/lib/python3.9/site-packages/keras/utils/traceback_utils.py", line 65, in error_handler
+      return fn(*args, **kwargs)
+    File "/home/yitao/.local/lib/python3.9/site-packages/keras/engine/training.py", line 2071, in evaluate
+      tmp_logs = self.test_function(iterator)
+    File "/home/yitao/.local/lib/python3.9/site-packages/keras/engine/training.py", line 1851, in test_function
+      return step_function(self, iterator)
+    File "/home/yitao/.local/lib/python3.9/site-packages/keras/engine/training.py", line 1835, in step_function
+      outputs = model.distribute_strategy.run(run_step, args=(data,))
+    File "/home/yitao/.local/lib/python3.9/site-packages/keras/engine/training.py", line 1823, in run_step
+      outputs = model.test_step(data)
+    File "/home/yitao/projects/tfSSSD/src/imputers/CSDI.py", line 183, in test_step
+      LOSS_SUM = tf.vectorized_map(body, elems=t) #, parallel_iterations=10,
+    File "/home/yitao/.local/lib/python3.9/site-packages/tensorflow/python/ops/parallel_for/pfor.py", line 4483, in f
+      [converter._convert_helper(x).t for x in func._func_graph_outputs])
+    File "/home/yitao/.local/lib/python3.9/site-packages/tensorflow/python/ops/parallel_for/pfor.py", line 4483, in f
+      [converter._convert_helper(x).t for x in func._func_graph_outputs])
+    File "/home/yitao/.local/lib/python3.9/site-packages/tensorflow/python/ops/parallel_for/pfor.py", line 4483, in f
+      [converter._convert_helper(x).t for x in func._func_graph_outputs])
+    [Previous line repeated 13 more times]
+Node: 'rfft/pfor/RFFT'
+Detected at node 'rfft/pfor/RFFT' defined at (most recent call last):
+    File "/home/yitao/projects/tfSSSD/src/train-csdi.py", line 63, in <module>
+      train_data = CSDIImputer.train(training_data, masking=args.masking)
+    File "/home/yitao/projects/tfSSSD/src/imputers/CSDIImputer.py", line 240, in train
+      history = self.model.fit(x=train_data, batch_size=self.batch_size, epochs=self.epochs, validation_split=0.1,
+    File "/home/yitao/.local/lib/python3.9/site-packages/keras/utils/traceback_utils.py", line 65, in error_handler
+      return fn(*args, **kwargs)
+    File "/home/yitao/.local/lib/python3.9/site-packages/keras/engine/training.py", line 1728, in fit
+      val_logs = self.evaluate(
+    File "/home/yitao/.local/lib/python3.9/site-packages/keras/utils/traceback_utils.py", line 65, in error_handler
+      return fn(*args, **kwargs)
+    File "/home/yitao/.local/lib/python3.9/site-packages/keras/engine/training.py", line 2071, in evaluate
+      tmp_logs = self.test_function(iterator)
+    File "/home/yitao/.local/lib/python3.9/site-packages/keras/engine/training.py", line 1851, in test_function
+      return step_function(self, iterator)
+    File "/home/yitao/.local/lib/python3.9/site-packages/keras/engine/training.py", line 1835, in step_function
+      outputs = model.distribute_strategy.run(run_step, args=(data,))
+    File "/home/yitao/.local/lib/python3.9/site-packages/keras/engine/training.py", line 1823, in run_step
+      outputs = model.test_step(data)
+    File "/home/yitao/projects/tfSSSD/src/imputers/CSDI.py", line 183, in test_step
+      LOSS_SUM = tf.vectorized_map(body, elems=t) #, parallel_iterations=10,
+    File "/home/yitao/.local/lib/python3.9/site-packages/tensorflow/python/ops/parallel_for/pfor.py", line 4483, in f
+      [converter._convert_helper(x).t for x in func._func_graph_outputs])
+    File "/home/yitao/.local/lib/python3.9/site-packages/tensorflow/python/ops/parallel_for/pfor.py", line 4483, in f
+      [converter._convert_helper(x).t for x in func._func_graph_outputs])
+    File "/home/yitao/.local/lib/python3.9/site-packages/tensorflow/python/ops/parallel_for/pfor.py", line 4483, in f
+      [converter._convert_helper(x).t for x in func._func_graph_outputs])
+    [Previous line repeated 13 more times]
+Node: 'rfft/pfor/RFFT'
+2 root error(s) found.
+  (0) INTERNAL:  Failed to create cuFFT batched plan with scratch allocator
+	 [[{{node rfft/pfor/RFFT}}]]
+	 [[StatefulPartitionedCall/loop_body/StatefulPartitionedCall/pfor/StatefulPartitionedCall/tf_csdi/StatefulPartitionedCall/pfor/StatefulPartitionedCall/diff_csdi/StatefulPartitionedCall/pfor/StatefulPartitionedCall/residual_block_2/StatefulPartitionedCall/pfor/StatefulPartitionedCall/mega_2/StatefulPartitionedCall/pfor/StatefulPartitionedCall/mega_layer_2/StatefulPartitionedCall/pfor/StatefulPartitionedCall/single_headed_attention_2/StatefulPartitionedCall/pfor/StatefulPartitionedCall/dense_18/Tensordot/MatMul/pfor/Shape/_228]]
+  (1) INTERNAL:  Failed to create cuFFT batched plan with scratch allocator
+	 [[{{node rfft/pfor/RFFT}}]]
+0 successful operations.
+0 derived errors ignored. [Op:__inference_test_function_97294]

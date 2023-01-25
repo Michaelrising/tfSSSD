@@ -1,0 +1,19 @@
+nohup: ignoring input
+2023-01-25 22:10:27.989307: I tensorflow/core/platform/cpu_feature_guard.cc:193] This TensorFlow binary is optimized with oneAPI Deep Neural Network Library (oneDNN) to use the following CPU instructions in performance-critical operations:  AVX2 AVX512F AVX512_VNNI FMA
+To enable them in other operations, rebuild TensorFlow with the appropriate compiler flags.
+2023-01-25 22:10:28.170186: I tensorflow/core/util/port.cc:104] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2023-01-25 22:10:28.996530: W tensorflow/compiler/xla/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libnvinfer.so.7'; dlerror: libnvinfer.so.7: cannot open shared object file: No such file or directory
+2023-01-25 22:10:28.996591: W tensorflow/compiler/xla/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libnvinfer_plugin.so.7'; dlerror: libnvinfer_plugin.so.7: cannot open shared object file: No such file or directory
+2023-01-25 22:10:28.996597: W tensorflow/compiler/tf2tensorrt/utils/py_utils.cc:38] TF-TRT Warning: Cannot dlopen some TensorRT libraries. If you would like to use Nvidia GPU with TensorRT, please make sure the missing libraries mentioned above are installed properly.
+2023-01-25 22:10:31.766627: I tensorflow/core/common_runtime/gpu/gpu_process_state.cc:222] Using CUDA malloc Async allocator for GPU: 0
+2023-01-25 22:10:31.767183: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1613] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 22242 MB memory:  -> device: 0, name: NVIDIA GeForce RTX 3090, pci bus id: 0000:68:00.0, compute capability: 8.6
+1 Physical GPUs, 1 Logical GPUs
+{'diffusion_config': {'T': 200, 'beta_0': 0.0001, 'beta_T': 0.02}, 'wavenet_config': {'in_channels': 6, 'out_channels': 6, 'num_res_layers': 36, 'res_channels': 256, 'skip_channels': 256, 'diffusion_step_embed_dim_in': 128, 'diffusion_step_embed_dim_mid': 512, 'diffusion_step_embed_dim_out': 512, 's4_lmax': 100, 's4_d_state': 64, 's4_dropout': 0.0, 's4_bidirectional': 1, 's4_layernorm': 1, 'alg': 'Mega'}, 'train_config': {'output_directory': '../results/stocks/', 'log_directory': '../log/stocks/', 'ckpt_iter': 'max', 'iters_per_ckpt': 200, 'iters_per_logging': 20, 'n_iters': 150000, 'learning_rate': 0.0002, 'only_generate_missing': 1, 'use_model': 2, 'masking': 'holiday', 'missing_k': 90, 'missing_rate': 0.2, 'batch_size': 32, 'epochs': 50}, 'trainset_config': {'train_data_path': '../datasets/Stocks/', 'test_data_path': '../datasets/Stocks/', 'stock': 'DJ', 'segment_length': 100, 'sampling_rate': 100}, 'gen_config': {'output_directory': '../results/stocks/SSSDS4/', 'log_directory': '../log/stocks/SSSDS4/', 'ckpt_path': '../results/stocks/SSSDS4/'}}
+==================================================
+=====================CSDI-Mega====================
+==================================================
+output directory ../results/stocks/SSSD-Mega/20230125-221031/sssd_model
+No valid checkpoint model found, start training from initialization.
+(2609, 29, 6)
+Data loaded
+Epoch 1/50

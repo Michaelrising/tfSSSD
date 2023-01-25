@@ -5,14 +5,14 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 import sys
-import datetime
+from datetime import datetime
 from utils.util import find_max_epoch, print_size, training_loss, calc_diffusion_hyperparams
-from utils.util import get_mask_mnr, get_mask_bm, get_mask_rm, std_normal
+from utils.util import get_mask_mnr, get_mask_bm, get_mask_rm, std_normal, get_mask_holiday
 
-# from imputers.DiffWaveImputer import DiffWaveImputer
-# from imputers.SSSDSAImputer import SSSDSAImputer
-from imputers.SSSDS4Imputer import SSSDS4Imputer
-
+from imputers.DiffWaveImputer import DiffWaveImputer
+from imputers.SSSDSAImputer import SSSDSAImputer
+from imputers.SSSDImputer import SSSDImputer
+import matplotlib.pyplot as plt
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 
@@ -29,6 +29,8 @@ def train(output_directory,
           masking,
           missing_k,
           missing_rate,
+          batch_size,
+          epochs,
           ):
     """
     Train Diffusion Models
@@ -49,11 +51,26 @@ def train(output_directory,
     masking(str):                   'mnr': missing not at random, 'bm': blackout missing, 'rm': random missing
     missing_k (int):                k missing time steps for each feature across the sample length.
     """
+    if model_config['alg'] == 'S4':
+        print('=' * 50)
+        print("=" * 22 + 'CSDI-S4' + "=" * 21)
+        print('=' * 50)
+    elif model_config['alg'] == 'transformer':
+        print('=' * 50)
+        print("=" * 17 + 'CSDI-TransFormer' + "=" * 17)
+        print('=' * 50)
+    elif model_config['alg'] == 'S5':
+        print('=' * 50)
+        print("=" * 22 + 'CSDI-S5' + "=" * 21)
+        print('=' * 50)
+    elif model_config['alg'] == 'Mega':
+        print('=' * 50)
+        print("=" * 21 + 'CSDI-Mega' + "=" * 20)
+        print('=' * 50)
 
     # generate experiment (local) path
-    local_path = "T{}_beta0{}_betaT{}".format(diffusion_config["T"],
-                                              diffusion_config["beta_0"],
-                                              diffusion_config["beta_T"])
+    current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+    local_path = 'SSSD-' + model_config['alg'] + '/' + current_time + '/sssd_model'
 
     # Get shared output_directory ready
     output_directory = os.path.join(output_directory, local_path)
@@ -68,7 +85,7 @@ def train(output_directory,
     elif use_model == 1:
         net = SSSDSAImputer(**model_config)
     elif use_model == 2:
-        net = SSSDS4Imputer(**model_config)
+        net = SSSDImputer(**model_config)
     else:
         print('Model chosen not available.')
         net = None
@@ -76,8 +93,8 @@ def train(output_directory,
 
 
     # set up log writer
-    current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    train_log_dir = log_directory + "/" + local_path + '/' + current_time
+
+    train_log_dir = log_directory + 'SSSD-' + model_config['alg'] + '/' + current_time + '/sssd_log'
     # train_summary_writer = tf.summary.create_file_writer(train_log_dir)
 
     # load checkpoint
@@ -105,11 +122,14 @@ def train(output_directory,
     ### Custom data loading and reshaping ###
 
     # prepare X and Y for model.fit()
-    training_data = np.load(trainset_config['train_data_path'])
 
-    training_data = tf.convert_to_tensor(training_data, dtype=tf.float32)
+    data_name = 'scaled_'+trainset_config['stock'] +'_all_stocks_2013-01-02_to_2023-01-01.npy'
+    training_data = np.load(trainset_config['train_data_path'] + data_name)
+    print(training_data.shape)
+
+
     print('Data loaded')
-    B, C, L = training_data.shape  # B is batchsize, C is the dimension of each audio, L is audio length
+    B, L, C = training_data.shape  # B is batchsize, C is the dimension of each audio, L is audio length
 
     if masking == 'rm':
         mask = np.ones((C, L))
@@ -122,17 +142,21 @@ def train(output_directory,
             sample_num = int(mask.shape[0] * missing_rate)
             idx = perm[0:sample_num]
             mask[:, channel][idx] = 0
-    elif masking == 'mnr':
-        transposed_mask = get_mask_mnr(training_data, missing_k)
-    elif masking == 'bm':
-        transposed_mask = get_mask_bm(training_data, missing_k)
-
-    mask = tf.transpose(tf.convert_to_tensor(mask, dtype=tf.float32), perm=[1, 0])
-    mask = tf.tile(tf.expand_dims(mask, 0), [B, 1, 1])
-    loss_mask = tf.logical_not(tf.cast(mask, dtype=tf.bool))  # .bool()
+        mask = tf.transpose(tf.convert_to_tensor(mask, dtype=tf.float32), perm=[1, 0])
+        mask = tf.tile(tf.expand_dims(mask, 0), [B, 1, 1])
+    # elif masking == 'mnr':
+    #     mask = get_mask_mnr(training_data, missing_k)
+    # elif masking == 'bm':
+    #     mask = get_mask_bm(training_data, missing_k)
+    elif masking == 'holiday':
+        mask = get_mask_holiday(training_data, batch_size)
+    training_data = tf.convert_to_tensor(np.nan_to_num(training_data), dtype=tf.float32)
+    # loss_mask = tf.logical_not(mask)  # .bool()
     training_data = tf.transpose(training_data, perm=[0, 2, 1])  # batch dim = [B, C, L]
+    mask = tf.transpose(mask, perm=[0, 2, 1])
+    # loss_mask = tf.transpose(loss_mask, perm=[0, 2, 1])
 
-    assert training_data.shape == mask.shape == loss_mask.shape
+    assert training_data.shape == mask.shape # == loss_mask.shape
 
     # prepare Y
     _dh = diffusion_hyperparams
@@ -151,41 +175,59 @@ def train(output_directory,
     X = [tf.cast(transformed_X, dtype=tf.float32), tf.cast(training_data, dtype=tf.float32), mask, tf.reshape(diffusion_steps, shape=(B, 1))]
 
     # define optimizer
-    optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
+    optimizer = keras.optimizers.Adam(learning_rate=learning_rate, epsilon=1e-6, amsgrad=True, clipnorm=0.5)
     # define loss
     loss = keras.losses.MeanSquaredError()
-    # define metrics
-    train_loss = tf.keras.metrics.Mean('train_loss', dtype=tf.float32)
-
+    # define callback
     tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=train_log_dir, histogram_freq=1)
-    earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=3)
-    earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='accuracy', mode='max', patience=3)
+    earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=10)
+    earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='accuracy', mode='max', patience=10)
     best_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-                                            filepath=output_directory + "/" + local_path + '/' + current_time,
+                                            filepath=output_directory,
                                             save_weights_only=False,
                                             monitor='accuracy',
                                             mode='max',
                                             save_best_only=True,
+                                            save_format='tf',
                                           )
 
     # training
-    # net.build(input_shape=((model_config["in_channels"], None, ), (model_config["in_channels"], None, ), (model_config["in_channels"], None, ), (None,)))
-    # net.summary()
     net.compile(optimizer=optimizer, loss=loss, metrics=['accuracy'])
-    net.fit(
+    history = net.fit(
         x=X,
         y=z,
-        batch_size=64,
-        epochs=50,
+        batch_size=batch_size,
+        epochs=epochs,
+        validation_split=0.1,
         callbacks=[tensorboard_callback,
                    earlyStop_loss_callback,
                    earlyStop_accu_call_back,
                    best_checkpoint_callback],
     )
+    plt.plot(history.history["loss"], c='blue')
+    plt.plot(history.history["val_loss"], c='orange')
+    plt.plot(history.history["accuracy"], c='red')
+    plt.grid()
+    plt.legend()
+    plt.title("Training Loss and Accuracy")
+    plt.savefig(train_log_dir + '/training.png')
+    plt.show()
+    net.summary()
+
+    # np.save(log_directory + 'SSSD-' + model_config['alg'] + '/' + current_time + '/observed_data.npy', training_data.numpy())
+    np.save(log_directory + 'SSSD-' + model_config['alg'] + '/' + current_time + '/gt_mask.npy', mask.numpy())
 
 
 if __name__ == "__main__":
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-c', '--config', type=str, default='/config/config_SSSD_stocks.json',
+                        help='JSON file for configuration')
+    parser.add_argument('-ignore_warning', type=str, default=True)
+    parser.add_argument('--cuda', type=int, default=0)
+    args = parser.parse_args()
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda)
     os.environ['TF_GPU_ALLOCATOR'] = 'cuda_malloc_async'
     gpus = tf.config.list_physical_devices('GPU')
     if gpus:
@@ -198,11 +240,11 @@ if __name__ == "__main__":
         except RuntimeError as e:
             # Memory growth must be set before GPUs have been initialized
             print(e)
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-c', '--config', type=str, default='/config/config_SSSDS4.json',
-                        help='JSON file for configuration')
+    if args.ignore_warning:
+        # Disable absl INFO and WARNING log messages
+        from absl import logging as absl_logging
+        absl_logging.set_verbosity(absl_logging.ERROR)
 
-    args = parser.parse_args()
     sys.path.append(os.getcwd() + args.config)
     with open(os.getcwd() + args.config) as f:
         data = f.read()

@@ -7,7 +7,7 @@ if __name__ == "__main__":
     parser.add_argument('--algo', type=str, default='transformer', help='The Algorithm for imputation: transformer or S4')
     parser.add_argument('--data', type=str, default='stocks', help='The data set for training')
     parser.add_argument('--cuda', type=int, default=1, help='The CUDA device for training')
-    parser.add_argument('--epochs', type=int, default=100, help='The number of epochs for training')
+    parser.add_argument('--epochs', type=int, default=200, help='The number of epochs for training')
     parser.add_argument('--batch_size', type=int, default=64, help='The number of batch size')
     parser.add_argument('--masking', type=str, default='holiday', help='The masking strategy')
     parser.add_argument('--target_strategy', type=str, default='holiday', help='The target strategy')
@@ -45,8 +45,6 @@ if __name__ == "__main__":
     if args.data == 'stocks':
     # Stock data
         all_data = np.load('../datasets/Stocks/scaled_DJ_all_stocks_2013-01-02_to_2023-01-01.npy') # Time_length * num_stocks * feature [B L K]
-        all_data = all_data[1:]
-
         training_data = tf.convert_to_tensor(all_data)
         # validation_data = tf.convert_to_tensor(all_data[int(0.8*all_data.shape[0]):])
     print('Data loaded')

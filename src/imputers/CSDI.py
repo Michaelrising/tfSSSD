@@ -177,12 +177,11 @@ class tfCSDI(keras.Model):
         def body(t):
             loss = self.loss_fn(observed_data, cond_mask, observed_mask, observed_tp, is_train=False, set_t=t)
             return tf.stop_gradient(loss)
-        # @tf.function
         t = tf.range(self.num_steps)
-        try:
-            LOSS_SUM = tf.vectorized_map(body, elems=t) #, parallel_iterations=10,
-        except:
-            LOSS_SUM = tf.map_fn(body, elems=t, fn_output_signature=tf.TensorSpec(shape=(), dtype=tf.float32))
+        # try:
+        #     LOSS_SUM = tf.vectorized_map(body, elems=t) #, parallel_iterations=10,
+        # except:
+        LOSS_SUM = tf.map_fn(body, elems=t, fn_output_signature=tf.TensorSpec(shape=(), dtype=tf.float32))
         val_loss = tf.reduce_sum(LOSS_SUM) / self.num_steps
         self.loss_tracker.update_state(val_loss)
         return {"loss": self.loss_tracker.result()}

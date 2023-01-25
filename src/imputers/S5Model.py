@@ -445,9 +445,9 @@ class S5Layer(keras.layers.Layer):
         self.V = tf.linalg.LinearOperatorBlockDiag([V] * self.blocks).to_dense() # TODO determine blog_diag
         self.Vinv = tf.linalg.LinearOperatorBlockDiag([Vc] * self.blocks).to_dense()
 
-        print("Lambda.shape={}".format(Lambda.shape))
-        print("V.shape={}".format(self.V.shape))
-        print("Vinv.shape={}".format(self.Vinv.shape))
+        # print("Lambda.shape={}".format(Lambda.shape))
+        # print("V.shape={}".format(self.V.shape))
+        # print("Vinv.shape={}".format(self.Vinv.shape))
 
     @tf.function #(input_signature=[tf.TensorSpec(shape=[None, 100, 64], dtype=tf.float32)])
     def call(self, input_sequence):
@@ -458,7 +458,7 @@ class S5Layer(keras.layers.Layer):
             Lambda_bar (complex64): discretized diagonal state matrix    (P,)
             B_bar      (complex64): discretized input matrix             (P, H)
             C_tilde    (complex64): output matrix                        (H, P)
-            input_sequence (float32): input sequence of features         (B, L, H)
+            input_sequence (float32): input sequence of features         (B, H, L)
             conj_sym (bool):         whether conjugate symmetry is enforced
             bidirectional (bool):    whether bidirectional setup is used,
                                   Note for this case C_tilde will have 2P cols
@@ -466,7 +466,7 @@ class S5Layer(keras.layers.Layer):
             ys (float32): the SSM outputs (S5 layer preactivations)      (B, L, H)
             Du + ys: output sequence (float32): (B, L, H)
         """
-
+        input_sequence = rearrange(input_sequence, 'b h l -> b l h')
         Identity = tf.ones(tf.shape(self.Lambda_re)[0], dtype=tf.complex64)
         Lambda_bar = tf.complex(tf.exp(self.Lambda_re * self.step) * tf.math.cos(self.Lambda_im * self.step), tf.exp(self.Lambda_re * self.step) * tf.math.sin(self.Lambda_im * self.step))
         B_bar = tf.expand_dims(tf.math.divide(1., tf.complex(self.Lambda_re, self.Lambda_im)) * (Lambda_bar - Identity), -1) * tf.complex(self.B[..., 0], self.B[..., 1])

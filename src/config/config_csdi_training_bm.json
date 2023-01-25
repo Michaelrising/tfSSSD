@@ -1,0 +1,27 @@
+{
+    "train": {
+        "epochs": 10,
+        "batch_size": 32,
+        "lr": 0.001,
+        "path_save": "../results/stocks/CSDI-S4/20230110-205552/csdi_model"
+    },
+    "diffusion": {
+        "layers": 4,
+        "channels": 64,
+        "nheads": 8,
+        "diffusion_embedding_dim": 128,
+        "beta_start": 0.0001,
+        "beta_end": 0.5,
+        "num_steps": 50,
+        "schedule": "quad",
+        "time_layer": "S4"
+    },
+    "model": {
+        "missing_ratio_or_k": 2,
+        "is_unconditional": 0,
+        "timeemb": 128,
+        "featureemb": 16,
+        "target_strategy": "blockout",
+        "masking": "bm"
+    }
+}

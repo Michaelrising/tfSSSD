@@ -99,7 +99,7 @@ class T5RelativePositionBias(keras.layers.Layer):
         ret += tf.where(is_small, n, val_if_large)
         return ret
 
-    # @tf.function
+    @tf.function
     def call(self, x):
         i, j = x.shape[-2:]
         q_pos = tf.range(i, dtype = tf.int32)
@@ -375,6 +375,8 @@ class Mega(keras.Model):
 
     @tf.function
     def call(self, x):
+        # x shape: B H L
+        x = rearrange(x, 'b h l -> b l h')
         pre_norm = self.pre_norm
         post_norm = not self.pre_norm
 

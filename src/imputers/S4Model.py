@@ -105,6 +105,7 @@ class TransposedLinear(keras.Model):
         else:
             self.b = 0.0
 
+    @tf.function
     def call(self, x):
         return  tf.einsum('... u l, v u -> ... v l', x, self.w) + self.b  #contract('... u l, v u -> ... v l', x, self.w) + self.b
 
@@ -1040,7 +1041,7 @@ class S4(keras.layers.Layer):
             weight_norm=weight_norm,
         )
 
-    @tf.function(input_signature=[tf.TensorSpec(shape=[None, 64, 29], dtype=tf.float32)])
+    @tf.function #(input_signature=[tf.TensorSpec(shape=[None, 64, 29], dtype=tf.float32)])
     def call(self, u):  # absorbs return_output and transformer src mask
         """
         u: (B H L) if self.transposed else (B L H)
@@ -1132,7 +1133,7 @@ class S4Layer(keras.Model):
         self.norm_layer = keras.layers.LayerNormalization(axis=-1) if layer_norm else tf.identity
         self.dropout = keras.layers.SpatialDropout1D(dropout) if dropout > 0 else tf.identity
 
-    @tf.function(input_signature=[tf.TensorSpec(shape=[None, 64, 29], dtype=tf.float32)])
+    @tf.function #(input_signature=[tf.TensorSpec(shape=[None, 64, 29], dtype=tf.float32)])
     def call(self, x):
         # x has shape # batch, feature, seq
         # x = tf.transpose(x, perm=[1, 2, 0])  (as expected from S4 with transposed=True)

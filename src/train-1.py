@@ -11,7 +11,7 @@ from utils.util import get_mask_mnr, get_mask_bm, get_mask_rm, std_normal
 
 # from imputers.DiffWaveImputer import DiffWaveImputer
 # from imputers.SSSDSAImputer import SSSDSAImputer
-from imputers.SSSDS4Imputer import SSSDS4Imputer
+from imputers.SSSDImputer import SSSDS4Imputer
 
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
@@ -193,7 +193,7 @@ def train(output_directory,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('-c', '--config', type=str, default='/config/config_SSSDS4.json',
+    parser.add_argument('-c', '--config', type=str, default='/config/config_SSSD.json',
                         help='JSON file for configuration')
 
     args = parser.parse_args()

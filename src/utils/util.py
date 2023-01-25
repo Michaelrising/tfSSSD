@@ -171,8 +171,8 @@ def calc_diffusion_hyperparams(T, beta_0, beta_T):
     diffusion_hyperparams = _dh
     return diffusion_hyperparams
 
-
-def sampling(net, size, diffusion_hyperparams, cond, mask, only_generate_missing=0, guidance_weight=0):
+@tf.function
+def sampling(net, size, diffusion_hyperparams, cond, mask, num_samples=50, only_generate_missing=0, guidance_weight=0):
     """
     Perform the complete sampling step according to p(x_0|x_T) = \prod_{t=1}^T p_{\theta}(x_{t-1}|x_t)
 
@@ -195,20 +195,25 @@ def sampling(net, size, diffusion_hyperparams, cond, mask, only_generate_missing
 
     print('begin sampling, total number of reverse steps = %s' % T)
 
-    x = std_normal(size)
-
-    # with torch.no_grad():
-    for t in range(T - 1, -1, -1):
-        if only_generate_missing == 1:
-            x = x * (1.0 - tf.constant(mask, dtype=tf.float32)) + cond * tf.constant(mask, dtype=tf.float32)
-        diffusion_steps = (t * tf.ones((size[0], 1)))  # use the corresponding reverse step
-        epsilon_theta = net((x, cond, mask, diffusion_steps,))  # predict \epsilon according to \epsilon_\theta
-        # update x_{t-1} to \mu_\theta(x_t)
-        x = (x - (1 - Alpha[t]) / tf.math.sqrt(1 - Alpha_bar[t]) * epsilon_theta) / tf.math.sqrt(Alpha[t])
-        if t > 0:
-            x = x + Sigma[t] * std_normal(size)  # add the variance term to x_{t-1}
-
-    return x
+    imputed_samples = tf.TensorArray(dtype=tf.float32, size=num_samples)
+    sample_i = 0
+    while sample_i < num_samples:
+        current_sample = tf.TensorArray(dtype=tf.float32, size=1, clear_after_read=False)
+        t = T - 1
+        current_sample = current_sample.write(0, tf.random.normal(size, dtype=cond.dtype))
+        while t >= 0:
+            if only_generate_missing == 1:
+                current_sample = current_sample.write(0, current_sample.read(0) * (1.0 - tf.constant(mask, dtype=tf.float32)) + cond * tf.constant(mask, dtype=tf.float32))
+            diffusion_steps = (t * tf.ones((size[0], 1)))  # use the corresponding reverse step
+            epsilon_theta = net((current_sample.read(0), cond, mask, diffusion_steps,))  # predict \epsilon according to \epsilon_\theta
+            # update x_{t-1} to \mu_\theta(x_t)
+            current_sample = current_sample.write(0, (current_sample.read(0) - (1 - Alpha[t]) / tf.math.sqrt(1 - Alpha_bar[t]) * epsilon_theta) / tf.math.sqrt(Alpha[t]))
+            if t > 0:
+                current_sample = current_sample.write(0, current_sample.read(0) + Sigma[t] * std_normal(size))  # add the variance term to x_{t-1}
+            t -= 1
+        imputed_samples = imputed_samples.write(sample_i, current_sample.read(0))
+        sample_i += 1
+    return imputed_samples.stack()
 
 
 def training_loss(net, loss_fn, X, diffusion_hyperparams, only_generate_missing=1):
@@ -301,3 +306,27 @@ def get_mask_bm(sample, k):
         mask[:, channel][s_nan[0]:s_nan[-1] + 1] = 0
 
     return tf.convert_to_tensor(mask)
+
+
+def get_mask_holiday(sample, batch_size):
+    B, C, L = sample.shape
+    observed_masks = ~np.isnan(sample) # NA: 0 ;has data: 1
+    holidays = np.unique(np.where(~observed_masks)[0])
+    gt_days = holidays
+    # for batch that there is no holiday, we add one day as a random holiday
+    batch_splits = np.arange(0, B, batch_size)
+    gt_batch_inds = np.unique(np.digitize(gt_days, batch_splits)) - 1
+    mask = ~np.isin(np.arange(0, batch_splits.shape[0]), gt_batch_inds)
+    not_gt_batch_inds = np.arange(0, batch_splits.shape[0])[mask]
+    for ind in not_gt_batch_inds:
+        random_day = np.random.choice(np.arange(batch_splits[ind], batch_splits[ind + 1]),
+                                      size=int(np.ceil(batch_size / 16)), replace=False)
+        gt_days = np.append(gt_days, random_day)
+    for ind in gt_batch_inds[:-1]:
+        random_day = np.random.choice(np.arange(batch_splits[ind], batch_splits[ind + 1]))
+        gt_days = np.append(gt_days, random_day)
+    gt_days = np.unique(gt_days)
+    gt_masks = observed_masks
+    gt_masks[gt_days] = np.zeros_like(observed_masks[0], dtype=bool)
+    return tf.cast(gt_masks, tf.float32)
+

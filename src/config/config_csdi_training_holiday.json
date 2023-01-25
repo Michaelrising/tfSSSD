@@ -1,0 +1,27 @@
+{
+    "train": {
+        "epochs": 200,
+        "batch_size": 64,
+        "lr": 0.0005,
+        "path_save": "../results/stocks/CSDI-transformer/20230125-110159/csdi_model"
+    },
+    "diffusion": {
+        "layers": 4,
+        "channels": 64,
+        "nheads": 8,
+        "diffusion_embedding_dim": 128,
+        "beta_start": 0.0001,
+        "beta_end": 0.5,
+        "num_steps": 50,
+        "schedule": "quad",
+        "time_layer": "transformer"
+    },
+    "model": {
+        "missing_ratio_or_k": 0.1,
+        "is_unconditional": 0,
+        "timeemb": 128,
+        "featureemb": 16,
+        "target_strategy": "holiday",
+        "masking": "holiday"
+    }
+}

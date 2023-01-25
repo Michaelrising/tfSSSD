@@ -29,7 +29,8 @@ class CSDIImputer:
               timeemb=128,
               featureemb=16,
               target_strategy='random',
-              amsgrad=False
+              amsgrad=False,
+              training=True,
             ):
 
         '''
@@ -70,39 +71,45 @@ class CSDIImputer:
         self.missing_ratio_or_k = missing_ratio_or_k
         self.amsgrad=amsgrad
 
-        self.config = {}
+        config_filename = self.config_path + "config_csdi_training_" + masking
+        if training:
+            self.config = {}
 
-        self.config['train'] = {}
-        self.config['train']['epochs'] = epochs
-        self.config['train']['batch_size'] = batch_size
-        self.config['train']['lr'] = lr
-        self.config['train']['path_save'] = self.model_path
+            self.config['train'] = {}
+            self.config['train']['epochs'] = epochs
+            self.config['train']['batch_size'] = batch_size
+            self.config['train']['lr'] = lr
+            self.config['train']['path_save'] = self.model_path
 
-        self.config['diffusion'] = {}
-        self.config['diffusion']['layers'] = layers
-        self.config['diffusion']['channels'] = channels
-        self.config['diffusion']['nheads'] = nheads
-        self.config['diffusion']['diffusion_embedding_dim'] = difussion_embedding_dim
-        self.config['diffusion']['beta_start'] = beta_start
-        self.config['diffusion']['beta_end'] = beta_end
-        self.config['diffusion']['num_steps'] = num_steps
-        self.config['diffusion']['schedule'] = schedule
-        self.config['diffusion']['time_layer'] = algo
+            self.config['diffusion'] = {}
+            self.config['diffusion']['layers'] = layers
+            self.config['diffusion']['channels'] = channels
+            self.config['diffusion']['nheads'] = nheads
+            self.config['diffusion']['diffusion_embedding_dim'] = difussion_embedding_dim
+            self.config['diffusion']['beta_start'] = beta_start
+            self.config['diffusion']['beta_end'] = beta_end
+            self.config['diffusion']['num_steps'] = num_steps
+            self.config['diffusion']['schedule'] = schedule
+            self.config['diffusion']['time_layer'] = algo
 
-        self.config['model'] = {}
-        self.config['model']['missing_ratio_or_k'] = missing_ratio_or_k
-        self.config['model']['is_unconditional'] = is_unconditional
-        self.config['model']['timeemb'] = timeemb
-        self.config['model']['featureemb'] = featureemb
-        self.config['model']['target_strategy'] = target_strategy
-        self.config['model']['masking'] = masking
+            self.config['model'] = {}
+            self.config['model']['missing_ratio_or_k'] = missing_ratio_or_k
+            self.config['model']['is_unconditional'] = is_unconditional
+            self.config['model']['timeemb'] = timeemb
+            self.config['model']['featureemb'] = featureemb
+            self.config['model']['target_strategy'] = target_strategy
+            self.config['model']['masking'] = masking
 
-        print(json.dumps(self.config, indent=4))
+            print(json.dumps(self.config, indent=4))
 
-        config_filename = self.config_path + "/config_csdi_training_" + masking
-        print('configuration file name:', config_filename)
-        with open(config_filename + ".json", "w") as f:
-            json.dump(self.config, f, indent=4)
+            print('configuration file name:', config_filename)
+            with open(config_filename + ".json", "w") as f:
+                json.dump(self.config, f, indent=4)
+        else:
+
+            with open(config_filename + '.json') as f:
+                data = f.read()
+            self.config = json.loads(data)
 
         # parameters for diffusion models
         self.num_steps = num_steps
@@ -126,6 +133,10 @@ class CSDIImputer:
         elif algo == 'S5':
             print('='*50)
             print("="*22 + 'CSDI-S5' + "="*21)
+            print('=' * 50)
+        elif algo == 'Mega':
+            print('=' * 50)
+            print("=" * 21 + 'CSDI-Mega' + "=" * 20)
             print('=' * 50)
         '''
         CSDI imputer
@@ -198,7 +209,7 @@ class CSDIImputer:
 
         # define callback
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=self.log_path, histogram_freq=1)
-        earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=10)
+        earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=20)
         # earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=10)
         best_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
             filepath=self.model_path,
@@ -240,7 +251,7 @@ class CSDIImputer:
             history = self.model.fit(x=train_data, batch_size=self.batch_size, epochs=self.epochs, validation_split=0.1,
                                      # validation_data=(validation_data,),
                                      callbacks=[tensorboard_callback,
-                                                earlyStop_loss_callback,
+                                                # earlyStop_loss_callback,
                                                 best_checkpoint_callback
                                                 ])
 
@@ -329,6 +340,10 @@ class CSDIImputer:
         self.n_samples = tf.constant(n_samples, dtype=tf.int32)
 
         # prepare data set
+        sample = sample[:self.batch_size*int(sample.shape[0]//self.batch_size)]
+        gt_mask = gt_mask[:self.batch_size*int(sample.shape[0]//self.batch_size)]
+        ob_masks = ob_masks[:self.batch_size*int(sample.shape[0]//self.batch_size)]
+
         test_data = tf.stack(tf.split(sample, int(sample.shape[0]/self.batch_size), 0))
         test_gt_masks = tf.stack(tf.split(gt_mask, int(sample.shape[0]/self.batch_size), 0))
         test_ob_masks = tf.stack(tf.split(ob_masks,  int(sample.shape[0]/self.batch_size), 0))
@@ -351,7 +366,7 @@ class CSDIImputer:
 
         return tf.stack(all_generated_samples) #, mse_total, mae_total, evalpoints_total
 
-    # @tf.function
+    @tf.function
     def impute(self, batch, n_samples):
         observed_data, observed_mask, gt_mask = batch
         cond_mask = gt_mask
