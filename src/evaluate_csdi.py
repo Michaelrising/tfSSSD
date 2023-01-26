@@ -10,6 +10,7 @@ if __name__ == "__main__":
     parser.add_argument('--model_loc', type=str, default=None, help='The location of the log file')
     parser.add_argument('--algo', type=str, default='S4', help='The Algorithm for imputation: transformer or S4')
     parser.add_argument('--data', type=str, default='stocks', help='The data set for training')
+    parser.add_argument('--stock', type=str, default='DJ', help='The data set for training: DJ SE ES')
     parser.add_argument('--cuda', type=int, default=0, help='The CUDA device for training')
     parser.add_argument('--n_samples', '-n', type=int, default=50, help='The number of samples to evaluate')
     parser.add_argument('--batch_size', type=int, default=32, help='The number of batch size')
@@ -31,7 +32,7 @@ if __name__ == "__main__":
         except RuntimeError as e:
             # Memory growth must be set before GPUs have been initialized
             print(e)
-    model_path = '../results/' + args.data + '/CSDI-' + args.algo + '/'
+    model_path = '../results/' + args.data + '/' + args.stock + '/CSDI-' + args.algo + '/'
     files_list = os.listdir(model_path)
     target_file = '00000000-000000'
     for file in files_list:
@@ -39,7 +40,7 @@ if __name__ == "__main__":
             target_file = max(target_file, file)
     target_file = args.model_loc if args.model_loc is not None else target_file
     model_path = model_path + target_file + '/csdi_model'
-    log_path = '../log/' + args.data + '/CSDI-' + args.algo + '/'
+    log_path = '../log/' + args.data + '/' + args.stock +'/CSDI-' + args.algo + '/'
     log_path = log_path + target_file + '/csdi_log'
     config_path = './config/' #+ "/config_csdi_training_" + args.masking
     # load data from training
@@ -59,7 +60,7 @@ if __name__ == "__main__":
     CSDIImputer.model = keras.models.load_model(model_path)
     imputed_data = CSDIImputer.imputer(sample=observed_data, gt_mask=gt_mask, ob_masks=ob_mask, n_samples=50)
     # imputations = imputed_data.stack()  # int(sample.shape[0]/self.batch_size) * n_samples * B * K * L
-    imputations = rearrange(imputed_data, 'i j b k l -> i b j l k')
+    imputations = rearrange(imputed_data, 'i j b k l -> (i b) j l k') # B num_samples length feature
     imp_data_numpy = imputations.numpy()
     np.save(log_path+'/imputed_data.npy', imp_data_numpy)
 

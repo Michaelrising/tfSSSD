@@ -171,7 +171,7 @@ def calc_diffusion_hyperparams(T, beta_0, beta_T):
     diffusion_hyperparams = _dh
     return diffusion_hyperparams
 
-@tf.function
+# @tf.function
 def sampling(net, size, diffusion_hyperparams, cond, mask, num_samples=50, only_generate_missing=0, guidance_weight=0):
     """
     Perform the complete sampling step according to p(x_0|x_T) = \prod_{t=1}^T p_{\theta}(x_{t-1}|x_t)
@@ -203,9 +203,9 @@ def sampling(net, size, diffusion_hyperparams, cond, mask, num_samples=50, only_
         current_sample = current_sample.write(0, tf.random.normal(size, dtype=cond.dtype))
         while t >= 0:
             if only_generate_missing == 1:
-                current_sample = current_sample.write(0, current_sample.read(0) * (1.0 - tf.constant(mask, dtype=tf.float32)) + cond * tf.constant(mask, dtype=tf.float32))
-            diffusion_steps = (t * tf.ones((size[0], 1)))  # use the corresponding reverse step
-            epsilon_theta = net((current_sample.read(0), cond, mask, diffusion_steps,))  # predict \epsilon according to \epsilon_\theta
+                current_sample = current_sample.write(0, current_sample.read(0) * (1.0 - mask) + cond * mask)
+            diffusion_steps = tf.cast(t * tf.ones((size[0], 1)), tf.int32)  # use the corresponding reverse step
+            epsilon_theta = net(input_data=(current_sample.read(0), cond, mask, diffusion_steps))  # predict \epsilon according to \epsilon_\theta
             # update x_{t-1} to \mu_\theta(x_t)
             current_sample = current_sample.write(0, (current_sample.read(0) - (1 - Alpha[t]) / tf.math.sqrt(1 - Alpha_bar[t]) * epsilon_theta) / tf.math.sqrt(Alpha[t]))
             if t > 0:

@@ -42,8 +42,7 @@
         "sampling_rate": 100
     },
     "gen_config":{
-        "output_directory": "../results/stocks/SSSD/",
-        "log_directory": "../log/stocks/SSSD/",
-        "ckpt_path": "../results/stocks/SSSD/"
+        "output_directory": "../results/stocks/",
+        "ckpt_path": "../results/stocks/"
     }
 }

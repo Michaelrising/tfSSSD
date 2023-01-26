@@ -10,7 +10,7 @@ from tensorflow import keras
 import tensorflow as tf
 from imputers.DiffWaveImputer import DiffWaveImputer
 from imputers.SSSDSAImputer import SSSDSAImputer
-from imputers.SSSDImputer import SSSDS4Imputer
+from imputers.SSSDImputer import SSSDImputer
 from tqdm import tqdm
 from sklearn.metrics import mean_squared_error
 from statistics import mean
@@ -22,7 +22,10 @@ def generate(output_directory,
              masking,
              missing_rate,
              only_generate_missing,
-             batch_size):
+             batch_size,
+             alg,
+             stock='S4',
+             model_loc=None):
     """
     Generate data based on ground truth
 
@@ -41,19 +44,21 @@ def generate(output_directory,
 
     # generate experiment (local) path
     past_time = '00000000-000000'
-    files_list = os.listdir(output_directory)
+    # files_list = os.listdir(output_directory + stock + '/SSSD-' + alg)
+    files_list = os.listdir(output_directory  + '/SSSD-' + alg)
     for file in files_list:
         if file.startswith('2023'):
             past_time = max(past_time, file)
-    past_time = args.model_loc if args.model_loc is not None else past_time
-    local_path = 'SSSD-S4' + '/' + past_time + '/generated_samples'
+    past_time = model_loc if model_loc is not None else past_time
+    # local_path = stock + '/SSSD-' + alg + '/' + past_time + '/generated_samples'
+    local_path = 'SSSD-' + alg + '/' + past_time + '/generated_samples'
 
     # Get shared output_directory ready
-    output_directory = os.path.join(output_directory, local_path)
+    output_directory = output_directory + local_path
     if not os.path.isdir(output_directory):
         os.makedirs(output_directory)
         os.chmod(output_directory, 0o775)
-    print("output directory", output_directory, flush=True)
+    print("output directory: ", output_directory, flush=True)
 
     # map diffusion hyperparameters to gpu
     for key in diffusion_hyperparams:
@@ -61,68 +66,73 @@ def generate(output_directory,
             diffusion_hyperparams[key] = diffusion_hyperparams[key]
 
 
-
-
     # load checkpoint
-    ckpt_path = os.path.join(ckpt_path, 'SSSD-S4' + '/' + past_time + '/sssd_model')
+    # ckpt_path = os.path.join(ckpt_path, stock +'/SSSD-' + alg + '/' + past_time + '/sssd_model')
+    ckpt_path = ckpt_path + 'SSSD-' + alg + '/' + past_time + '/sssd_model'
 
     try:
         # reload model
-        net = keras.models.load_model(ckpt_path)
+        # net = keras.models.load_model(ckpt_path)
+        net = SSSDImputer(**model_config, alg=alg)
         print('Successfully loaded model saved at time: {}!'.format(past_time))
     except:
         raise Exception('No valid model found')
 
     ### Custom data loading and reshaping ###
-    data_name = 'scaled_' + trainset_config['stock'] + '_all_stocks_2013-01-02_to_2023-01-01.npy'
+    data_name = 'scaled_' + stock + '_all_stocks_2013-01-02_to_2023-01-01.npy'
     testing_data = np.load(trainset_config['test_data_path'] + data_name)
-    # testing_data = tf.convert_to_tensor(testing_data)
-    testing_data = np.stack(np.split(testing_data, int(testing_data.shape[0] / batch_size), 0))
+    # testing_data = testing_data[:int(testing_data.shape[0] / batch_size) * batch_size]
+    testing_data = np.array_split(testing_data, testing_data.shape[0] // batch_size + 1, 0)
+    test_gt_masks = np.load('../log/stocks/SSSD-S4/' + past_time + '/gt_mask.npy')
+    test_gt_masks = np.array_split(test_gt_masks.transpose([0, 2,1]), test_gt_masks.shape[0] // batch_size + 1, 0)
+
     print('Data loaded')
-    B, L, C = testing_data[0].shape  # B is batchsize, C is the dimension of each audio, L is audio length
+
 
     all_mse = []
     all_generated_samples=[]
-    pbar = tqdm(total=testing_data.shape[0] / batch_size)
+    pbar = tqdm(total=len(testing_data))
     for i, batch in enumerate(testing_data):
+        B, L, C = batch.shape  # B is batchsize, C is the dimension of each audio, L is audio length
+        if test_gt_masks is None:
+            if masking == 'rm':
+                mask = np.ones((C, L))
+                # mask = tf.Variable(mask_array, trainable=False)
+                length_index = np.arange(mask.shape[0])  # lenght of series indexes
+                for channel in range(mask.shape[1]):
+                    # perm = torch.randperm(len(length_index))
+                    perm = np.random.permutation(len(length_index))
 
-        if masking == 'rm':
-            mask = np.ones((C, L))
-            # mask = tf.Variable(mask_array, trainable=False)
-            length_index = np.arange(mask.shape[0])  # lenght of series indexes
-            for channel in range(mask.shape[1]):
-                # perm = torch.randperm(len(length_index))
-                perm = np.random.permutation(len(length_index))
+                    sample_num = int(mask.shape[0] * missing_rate)
+                    idx = perm[0:sample_num]
+                    mask[:, channel][idx] = 0
+                mask = tf.transpose(tf.convert_to_tensor(mask, dtype=tf.float32), perm=[1, 0])
+                mask = tf.tile(tf.expand_dims(mask, 0), [B, 1, 1])
+            elif masking == 'holiday':
+                observed_masks = ~np.isnan(batch)
+                holidays = np.unique(np.where(~observed_masks)[0])
+                gt_days = holidays
 
-                sample_num = int(mask.shape[0] * missing_rate)
-                idx = perm[0:sample_num]
-                mask[:, channel][idx] = 0
-            mask = tf.transpose(tf.convert_to_tensor(mask, dtype=tf.float32), perm=[1, 0])
-            mask = tf.tile(tf.expand_dims(mask, 0), [B, 1, 1])
-        elif masking == 'holiday':
-            B, C, L = batch.shape
-            observed_masks = ~np.isnan(batch)
-            holidays = np.unique(np.where(~observed_masks)[0])
-            gt_days = holidays
+                if holidays.shape == 0:
+                    random_day = np.random.choice(np.arange(0, B),
+                                                  size=int(np.ceil(B / 16)), replace=False)
+                    gt_days = np.append(gt_days, random_day)
+                else:
+                    random_day = np.random.choice(np.arange(0, B))
+                    gt_days = np.append(gt_days, random_day)
 
-            if holidays.shape == 0:
-                random_day = np.random.choice(np.arange(0, batch_size),
-                                              size=int(np.ceil(batch_size / 16)), replace=False)
-                gt_days = np.append(gt_days, random_day)
-            else:
-                random_day = np.random.choice(np.arange(0, batch_size))
-                gt_days = np.append(gt_days, random_day)
-
-            gt_days = np.unique(gt_days)
-            mask = observed_masks
-            mask[gt_days] = np.zeros_like(observed_masks[0], dtype=bool)
-
-        batch = tf.convert_to_tensor(batch)
+                gt_days = np.unique(gt_days)
+                mask = observed_masks
+                mask[gt_days] = np.zeros_like(observed_masks[0], dtype=bool)
+        else:
+            mask = tf.convert_to_tensor(test_gt_masks[i].transpose([0, 2, 1]))
+        mask = tf.cast(mask, tf.float32)
+        batch = tf.cast(tf.convert_to_tensor(np.nan_to_num(batch)), tf.float32)
         batch = tf.transpose(batch, perm=[0, 2, 1])
 
         sample_length = batch.shape[2]
         sample_channels = batch.shape[1]
-        generated_audio = sampling(net, (batch_size, sample_channels, sample_length),
+        generated_audio = sampling(net, (B, sample_channels, sample_length),
                                    diffusion_hyperparams,
                                    num_samples=num_samples,
                                    cond=batch,
@@ -156,8 +166,8 @@ def generate(output_directory,
 
     print('Total MSE:', mean(all_mse))
     imputed_data = tf.stack(all_generated_samples)
-    imputations = rearrange(imputed_data, 'i j b k l -> i b j l k')
-    imp_data_numpy = imputations.numpy()
+    imputations = rearrange(imputed_data, 'i j b k l -> (i b) j l k') # i: total_timestamps // num_samples, j: num_samples
+    imp_data_numpy = imputations.numpy() # B num_samples length feature
     np.save(output_directory + '/imputed_data.npy', imp_data_numpy)
 
 
@@ -167,7 +177,30 @@ if __name__ == "__main__":
                         help='JSON file for configuration')
     parser.add_argument('-n', '--num_samples', type=int, default=50,
                         help='Number of utterances to be generated')
+    parser.add_argument('--ignore_warning', type=str, default=True)
+    parser.add_argument('--cuda', type=int, default=0)
+    parser.add_argument('--alg', type=str, default='S4')
+    parser.add_argument('--stock', type=str, default='DJ')
     args = parser.parse_args()
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda)
+    os.environ['TF_GPU_ALLOCATOR'] = 'cuda_malloc_async'
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        try:
+            # Currently, memory growth needs to be the same across GPUs
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            logical_gpus = tf.config.list_logical_devices('GPU')
+            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+        except RuntimeError as e:
+            # Memory growth must be set before GPUs have been initialized
+            print(e)
+    if args.ignore_warning:
+        # Disable absl INFO and WARNING log messages
+        from absl import logging as absl_logging
+
+        absl_logging.set_verbosity(absl_logging.ERROR)
 
     # Parse configs. Globals nicer in this case
     with open(args.config) as f:
@@ -201,4 +234,9 @@ if __name__ == "__main__":
              num_samples=args.num_samples,
              masking=train_config["masking"],
              missing_rate=train_config["missing_k"],
-             only_generate_missing=train_config["only_generate_missing"])
+             only_generate_missing=train_config["only_generate_missing"],
+             batch_size=train_config['batch_size'],
+             alg=args.alg,
+             stock=args.stock,
+             model_loc=None,
+             )

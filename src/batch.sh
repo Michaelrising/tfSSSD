@@ -11,7 +11,12 @@ nohup python3 -u evaluate_csdi.py --algo 'S5' --cuda 1 --data 'stocks' > ../log/
 
 
 
-
+# SZ
 nohup python3 -u train-sssd.py --cuda 1 --alg "S4" --stock 'DJ' > ../log/stocks/train_sssd_dj_s4.log  2>&1 &
 nohup python3 -u train-sssd.py --cuda 0 --alg "S5" --stock 'DJ'  > ../log/stocks/train_sssd_dj_s5.log  2>&1 &
 nohup python3 -u train-sssd.py --cuda 1 --alg "Mega" --stock 'DJ' > ../log/stocks/train_sssd_dj_mega.log  2>&1 &
+
+# HK
+nohup python3 -u train-sssd.py --cuda 0 --alg "S4" --stock 'SE' > ../log/stocks/train_sssd_se_s4.log  2>&1 &
+nohup python3 -u train-sssd.py --cuda 0 --alg "S5" --stock 'SE'  > ../log/stocks/train_sssd_se_s5.log  2>&1 &
+nohup python3 -u train-sssd.py --cuda 1 --alg "Mega" --stock 'SE' > ../log/stocks/train_sssd_se_mega.log  2>&1 &
