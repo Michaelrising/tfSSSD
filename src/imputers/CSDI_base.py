@@ -9,7 +9,7 @@ import tensorflow_models as tfm
 
 from .S4Model import S4Layer
 from .S5Model import S5Layer
-from .MegaModel import Mega
+from .MegaModel import Mega, MegaLayer
 # from src.utils.util import SetLearningRate
 
 
@@ -360,9 +360,9 @@ class ResidualBlock(keras.layers.Layer):
         elif time_layer=='S4':
             self.time_layer = S4Layer(features=channels, lmax=100)
         elif time_layer == 'S5':
-            self.time_layer = S5Layer(features=channels)
+            self.time_layer = S5Layer(ssm_size=16, features=channels) # ssm_size has Order(H)
         elif time_layer == 'Mega':
-            self.time_layer = Mega(features=channels, depth=6, chunk_size=-1)
+            self.time_layer = MegaLayer(features=channels, chunk_size=-1)
         self.feature_layer = keras.Sequential()
         self.feature_layer.add(keras.layers.Input((None, channels)))
         self.feature_layer.add(tfm.nlp.models.TransformerEncoder(num_layers=1,

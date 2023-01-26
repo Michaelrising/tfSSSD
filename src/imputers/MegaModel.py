@@ -281,7 +281,7 @@ class MultiHeadedEMA(keras.layers.Layer):
 class MegaLayer(keras.Model):
     def __init__(
         self,
-        dim = 128,
+        features = 128,
         ema_heads = 16,
         attn_dim_qk = 64,
         attn_dim_value = 256,
@@ -294,7 +294,7 @@ class MegaLayer(keras.Model):
         self.chunk_size = chunk_size
 
         self.single_headed_attn = SingleHeadedAttention(
-            dim = dim,
+            dim = features,
             dim_qk = attn_dim_qk,
             dim_value = attn_dim_value,
             chunk_size = chunk_size,
@@ -303,7 +303,7 @@ class MegaLayer(keras.Model):
         )
 
         self.multi_headed_ema = MultiHeadedEMA(
-            dim = dim,
+            dim = features,
             heads = ema_heads,
             bidirectional = not causal,
             dim_head = ema_dim_head
@@ -311,16 +311,17 @@ class MegaLayer(keras.Model):
 
         self.to_reset_gate = keras.layers.Dense(attn_dim_value, activation=keras.activations.swish)
 
-        self.to_update_gate = keras.layers.Dense(dim, activation=keras.activations.sigmoid)
+        self.to_update_gate = keras.layers.Dense(features, activation=keras.activations.sigmoid)
 
         # equation 14, for calculating H
 
-        self.Wh = tf.Variable(tf.random.normal(shape=[dim, dim]), name='Wh')
-        self.Uh = tf.Variable(tf.random.normal(shape=[attn_dim_value, dim]), name='Uh')
-        self.bh = tf.Variable(tf.random.normal(shape=(dim,)), name='bh')
+        self.Wh = tf.Variable(tf.random.normal(shape=[features, features]), name='Wh')
+        self.Uh = tf.Variable(tf.random.normal(shape=[attn_dim_value, features]), name='Uh')
+        self.bh = tf.Variable(tf.random.normal(shape=(features,)), name='bh')
 
     @tf.function
     def call(self, x, residual = None):
+        x = rearrange(x, 'b h l -> b l h')
         residual = default(residual, x)
 
         ema_output = self.multi_headed_ema(x)
@@ -367,7 +368,7 @@ class Mega(keras.Model):
         self.mega_layers = []
         for _ in range(depth):
             self.mega_layers.append([
-                MegaLayer(dim = features, chunk_size=chunk_size, **kwargs),
+                MegaLayer(features = features, chunk_size=chunk_size, **kwargs),
                 keras.layers.LayerNormalization(axis=-1),
                 FeedForward(dim = features, ff_mult = ff_mult),
                 keras.layers.LayerNormalization(axis=-1),

@@ -53,19 +53,19 @@ def train(output_directory,
     """
     if model_config['alg'] == 'S4':
         print('=' * 50)
-        print("=" * 22 + 'CSDI-S4' + "=" * 21)
+        print("=" * 22 + 'SSSD-S4' + "=" * 21)
         print('=' * 50)
     elif model_config['alg'] == 'transformer':
         print('=' * 50)
-        print("=" * 17 + 'CSDI-TransFormer' + "=" * 17)
+        print("=" * 17 + 'SSSD-TransFormer' + "=" * 17)
         print('=' * 50)
     elif model_config['alg'] == 'S5':
         print('=' * 50)
-        print("=" * 22 + 'CSDI-S5' + "=" * 21)
+        print("=" * 22 + 'SSSD-S5' + "=" * 21)
         print('=' * 50)
     elif model_config['alg'] == 'Mega':
         print('=' * 50)
-        print("=" * 21 + 'CSDI-Mega' + "=" * 20)
+        print("=" * 21 + 'SSSD-Mega' + "=" * 20)
         print('=' * 50)
 
     # generate experiment (local) path

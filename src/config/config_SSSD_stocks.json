@@ -13,12 +13,12 @@
         "diffusion_step_embed_dim_in": 128,
         "diffusion_step_embed_dim_mid": 512,
         "diffusion_step_embed_dim_out": 512,
-        "s4_lmax": 100,
+        "s4_lmax": 29,
         "s4_d_state":64,
         "s4_dropout":0.0,
         "s4_bidirectional":1,
         "s4_layernorm":1,
-        "alg": "Mega"
+        "alg": "S5"
     },
     "train_config": {
         "output_directory": "../results/stocks/",

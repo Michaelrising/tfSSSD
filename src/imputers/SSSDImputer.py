@@ -79,11 +79,11 @@ class Residual_block(keras.Model):
                                layer_norm=s4_layernorm,
                                )
         elif alg == 'S5':
-            self.SSM1 = S5Layer(features=2 * self.res_channels)
-            self.SSM2 = S5Layer(features=2 * self.res_channels)
+            self.SSM1 = S5Layer(ssm_size=s4_d_state, features=2 * self.res_channels) # ssm_size has Order(H)
+            self.SSM2 = S5Layer(ssm_size=s4_d_state, features=2 * self.res_channels)
         elif alg == 'Mega':
-            self.SSM1 = Mega(features=2 * self.res_channels, depth=3, chunk_size=-1)
-            self.SSM2 = Mega(features=2 * self.res_channels, depth=3, chunk_size=-1)
+            self.SSM1 = MegaLayer(features=2 * self.res_channels, chunk_size=-1)
+            self.SSM2 = MegaLayer(features=2 * self.res_channels, chunk_size=-1)
 
         self.conv_layer = Conv(self.res_channels, 2 * self.res_channels, kernel_size=3)
 
