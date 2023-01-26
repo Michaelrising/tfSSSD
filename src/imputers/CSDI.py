@@ -139,10 +139,11 @@ class tfCSDI(keras.Model):
 
         return total_input
 
-    @tf.function(input_signature=[((tf.TensorSpec([None, 6, 29], tf.float32),
-                                    tf.TensorSpec([None, 6, 29], tf.float32),
-                                    tf.TensorSpec([None, 6, 29], tf.float32),
-                                    tf.TensorSpec([None, 6, 29], tf.float32)), )])
+    # @tf.function(input_signature=[((tf.TensorSpec([None, 6, 29], tf.float32),
+    #                                 tf.TensorSpec([None, 6, 29], tf.float32),
+    #                                 tf.TensorSpec([None, 6, 29], tf.float32),
+    #                                 tf.TensorSpec([None, 6, 29], tf.float32)), )])
+    @tf.function
     def train_step(self, batch):
         observed_data, observed_mask, _, cond_mask = batch[0]
         # observation mask denotes the original data missing, gt_masks is manmade mask
@@ -163,10 +164,11 @@ class tfCSDI(keras.Model):
         self.loss_tracker.update_state(loss)
         return {"loss": self.loss_tracker.result()}
 
-    @tf.function(input_signature=[((tf.TensorSpec([None, 6, 29], tf.float32),
-                                    tf.TensorSpec([None, 6, 29], tf.float32),
-                                    tf.TensorSpec([None, 6, 29], tf.float32),
-                                    tf.TensorSpec([None, 6, 29], tf.float32)), )])
+    # @tf.function(input_signature=[((tf.TensorSpec([None, 6, 29], tf.float32),
+    #                                 tf.TensorSpec([None, 6, 29], tf.float32),
+    #                                 tf.TensorSpec([None, 6, 29], tf.float32),
+    #                                 tf.TensorSpec([None, 6, 29], tf.float32)), )])
+    @tf.function
     def test_step(self, batch):
         observed_data, observed_mask, _, cond_mask = batch[0]
         # observation mask denotes the original data missing, gt_masks is man-made mask

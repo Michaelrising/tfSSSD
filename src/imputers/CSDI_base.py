@@ -309,9 +309,10 @@ class diff_CSDI(keras.Model): #layers.Layer
             if self.algo == 'S4':
                 self.residual_layers[i].time_layer.built_after_run()
 
-    @tf.function(input_signature=[(tf.TensorSpec([None, 2, 6, 29], tf.float32),
-                                   tf.TensorSpec([None, 145, 6, 29], tf.float32),
-                                   tf.TensorSpec([None], tf.int32))])
+    # @tf.function(input_signature=[(tf.TensorSpec([None, 2, 6, 29], tf.float32),
+    #                                tf.TensorSpec([None, 145, 6, 29], tf.float32),
+    #                                tf.TensorSpec([None], tf.int32))])
+    @tf.function
     def call(self, batch):
         x, cond_info, t = batch
         B, inputdim, K, L = x.shape
@@ -379,15 +380,15 @@ class ResidualBlock(keras.layers.Layer):
         if L == 1:
             return y
         y = rearrange(y, '... c (k l) -> ... k c l', k=K) # b k c l
-        if self.time_layer_type == 'transformer':
-            y = rearrange(y, ' b k c l ->  (b k) l c') # in torch version, batch_first is False so it transposes input as L B C but we dont need to do here
-            y = self.time_layer(y) # output is bk l c
-            y = rearrange(y, '(b k) l c -> b (k l) c', k=K) # transpose to b k l c
-            y = rearrange(y, 'b (k l) c -> b c (k l)', k=K)  # b c (k l)
-        elif self.time_layer_type == 'S4' or self.time_layer_type == 'S5' or self.time_layer_type == 'Mega':
-            y = rearrange(y, ' b k c l -> (b k) c l') # batch feature length
-            y = self.time_layer(y)  # bk, c, l -> bk, l, c
-            y = rearrange(y, '(b k) l c -> b c (k l)', k=K)  # b c k l
+        # if self.time_layer_type == 'transformer':
+        y = rearrange(y, ' b k c l ->  (b k) l c') # in torch version, batch_first is False so it transposes input as L B C but we dont need to do here
+        y = self.time_layer(y) # output is bk l c
+        y = rearrange(y, '(b k) l c -> b (k l) c', k=K) # transpose to b k l c
+        y = rearrange(y, 'b (k l) c -> b c (k l)', k=K)  # b c (k l)
+        # elif self.time_layer_type == 'S4' or self.time_layer_type == 'S5' or self.time_layer_type == 'Mega':
+        #     y = rearrange(y, ' b k c l -> (b k) c l') # batch feature length
+        #     y = self.time_layer(y)  # bk, c, l -> bk, l, c
+        #     y = rearrange(y, '(b k) l c -> b c (k l)', k=K)  # b c k l
 
         return y
 

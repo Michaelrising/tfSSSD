@@ -321,7 +321,6 @@ class MegaLayer(keras.Model):
 
     @tf.function
     def call(self, x, residual = None):
-        x = rearrange(x, 'b h l -> b l h')
         residual = default(residual, x)
 
         ema_output = self.multi_headed_ema(x)
@@ -338,7 +337,7 @@ class MegaLayer(keras.Model):
 
         # update gate
 
-        return update_gate * H + (1 - update_gate) * residual
+        return update_gate * H + (1 - update_gate) * residual # B L H
 
 # Mega
 
@@ -376,8 +375,7 @@ class Mega(keras.Model):
 
     @tf.function
     def call(self, x):
-        # x shape: B H L
-        x = rearrange(x, 'b h l -> b l h')
+        # x shape: B L H
         pre_norm = self.pre_norm
         post_norm = not self.pre_norm
 

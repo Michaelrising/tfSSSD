@@ -1135,11 +1135,11 @@ class S4Layer(keras.Model):
 
     @tf.function #(input_signature=[tf.TensorSpec(shape=[None, 64, 29], dtype=tf.float32)])
     def call(self, x):
-        # x has shape # batch, feature, seq
-        # x = tf.transpose(x, perm=[1, 2, 0])  (as expected from S4 with transposed=True)
+        # x has shape # batch, seq, feature
+        x = tf.transpose(x, perm=[0, 2, 1]) # B H L
         xout, _ = self.s4_layer(x)  # batch, feature,  seq,
-        xout = self.dropout(tf.transpose(xout, perm=[0,2,1]))
-        xout = xout + tf.transpose(x, perm=[0,2,1])  # skip connection   # batch, seq, feature
+        xout = self.dropout(tf.transpose(xout, perm=[0, 2, 1])) # batch, seq, feature
+        xout = xout + tf.transpose(x, perm=[0, 2, 1])  # skip connection   # batch, seq, feature
         return self.norm_layer(xout) # apply normalization to features
 
     def built_after_run(self):

@@ -105,15 +105,15 @@ class Residual_block(keras.Model):
         h = h + part_t
 
         h = self.conv_layer(h)
-        h = self.SSM1(h)
-        h = tf.transpose(h, perm=[0, 2, 1])
+        h = self.SSM1(tf.transpose(h, perm=[0, 2, 1])) # SSM input shape is B L C output has shape B L C
+        h = tf.transpose(h, perm=[0, 2, 1]) # B C L
 
         assert cond is not None
         cond = self.cond_conv(cond)
         h += cond
 
-        h = self.SSM2(h)
-        h = tf.transpose(h, perm=[0, 2, 1])
+        h = self.SSM2(tf.transpose(h, perm=[0, 2, 1])) # SSM input shape is B L C
+        h = tf.transpose(h, perm=[0, 2, 1]) # B C L
 
         out = tf.math.tanh(h[:, :self.res_channels, :]) * tf.math.sigmoid(h[:, self.res_channels:, :])
 

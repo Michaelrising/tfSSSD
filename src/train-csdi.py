@@ -6,9 +6,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--algo', type=str, default='transformer', help='The Algorithm for imputation: transformer or S4')
     parser.add_argument('--data', type=str, default='stocks', help='The data set for training')
+    parser.add_argument('--stock', type=str, default='DJ', help='The data set for training: DJ SE ES')
     parser.add_argument('--cuda', type=int, default=1, help='The CUDA device for training')
     parser.add_argument('--epochs', type=int, default=200, help='The number of epochs for training')
-    parser.add_argument('--batch_size', type=int, default=64, help='The number of batch size')
+    parser.add_argument('--batch_size', type=int, default=32, help='The number of batch size')
     parser.add_argument('--masking', type=str, default='holiday', help='The masking strategy')
     parser.add_argument('--target_strategy', type=str, default='holiday', help='The target strategy')
     parser.add_argument('--amsgrad', type=bool, default=False, help='The optimizer whether uses AMSGrad')
@@ -27,8 +28,8 @@ if __name__ == "__main__":
             # Memory growth must be set before GPUs have been initialized
             print(e)
     current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-    model_path = '../results/' + args.data + '/CSDI-' + args.algo + '/' + current_time + '/csdi_model'
-    log_path = '../log/' + args.data + '/CSDI-' + args.algo + '/' + current_time + '/csdi_log'
+    model_path = '../results/' + args.data + '/' + args.stock +'/CSDI-' + args.algo + '/' + current_time + '/csdi_model'
+    log_path = '../log/' + args.data + '/' + args.stock + '/CSDI-' + args.algo + '/' + current_time + '/csdi_log'
     config_path = './config'
     if not os.path.exists(model_path):
         os.makedirs(model_path)
@@ -44,7 +45,7 @@ if __name__ == "__main__":
         predicton_data = tf.convert_to_tensor(all_data[7680:])
     if args.data == 'stocks':
     # Stock data
-        all_data = np.load('../datasets/Stocks/scaled_DJ_all_stocks_2013-01-02_to_2023-01-01.npy') # Time_length * num_stocks * feature [B L K]
+        all_data = np.load('../datasets/Stocks/scaled_' + args.stock +'_all_stocks_2013-01-02_to_2023-01-01.npy') # Time_length * num_stocks * feature [B L K]
         training_data = tf.convert_to_tensor(all_data)
         # validation_data = tf.convert_to_tensor(all_data[int(0.8*all_data.shape[0]):])
     print('Data loaded')

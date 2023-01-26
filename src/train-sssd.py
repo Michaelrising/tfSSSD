@@ -31,6 +31,8 @@ def train(output_directory,
           missing_rate,
           batch_size,
           epochs,
+          alg=None,
+          stock=None,
           ):
     """
     Train Diffusion Models
@@ -51,26 +53,26 @@ def train(output_directory,
     masking(str):                   'mnr': missing not at random, 'bm': blackout missing, 'rm': random missing
     missing_k (int):                k missing time steps for each feature across the sample length.
     """
-    if model_config['alg'] == 'S4':
+    if alg == 'S4':
         print('=' * 50)
         print("=" * 22 + 'SSSD-S4' + "=" * 21)
         print('=' * 50)
-    elif model_config['alg'] == 'transformer':
+    elif alg == 'transformer':
         print('=' * 50)
         print("=" * 17 + 'SSSD-TransFormer' + "=" * 17)
         print('=' * 50)
-    elif model_config['alg'] == 'S5':
+    elif alg == 'S5':
         print('=' * 50)
         print("=" * 22 + 'SSSD-S5' + "=" * 21)
         print('=' * 50)
-    elif model_config['alg'] == 'Mega':
+    elif alg == 'Mega':
         print('=' * 50)
         print("=" * 21 + 'SSSD-Mega' + "=" * 20)
         print('=' * 50)
 
     # generate experiment (local) path
     current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-    local_path = 'SSSD-' + model_config['alg'] + '/' + current_time + '/sssd_model'
+    local_path = stock + '/SSSD-' + alg + '/' + current_time + '/sssd_model'
 
     # Get shared output_directory ready
     output_directory = os.path.join(output_directory, local_path)
@@ -79,13 +81,27 @@ def train(output_directory,
         os.chmod(output_directory, 0o775)
     print("output directory", output_directory, flush=True)
 
+    ### Custom data loading and reshaping ###
+
+    # prepare X and Y for model.fit()
+
+    data_name = 'scaled_' + stock + '_all_stocks_2013-01-02_to_2023-01-01.npy'
+    training_data = np.load(trainset_config['train_data_path'] + data_name)
+    print('Loading stocks data: ' + stock )
+    print(training_data.shape)
+
+    print('Data loaded')
+
+    B, L, C = training_data.shape  # B is batchsize, C is the dimension of each audio, L is audio length
+    model_config['s4_lmax'] = L
+
 
     if use_model == 0:
         net = DiffWaveImputer(**model_config)
     elif use_model == 1:
         net = SSSDSAImputer(**model_config)
     elif use_model == 2:
-        net = SSSDImputer(**model_config)
+        net = SSSDImputer(**model_config, alg=alg)
     else:
         print('Model chosen not available.')
         net = None
@@ -94,7 +110,7 @@ def train(output_directory,
 
     # set up log writer
 
-    train_log_dir = log_directory + 'SSSD-' + model_config['alg'] + '/' + current_time + '/sssd_log'
+    train_log_dir = log_directory + stock +'/SSSD-' + alg + '/' + current_time + '/sssd_log'
     # train_summary_writer = tf.summary.create_file_writer(train_log_dir)
 
     # load checkpoint
@@ -119,17 +135,8 @@ def train(output_directory,
         ckpt_iter = -1
         print('No valid checkpoint model found, start training from initialization.')
 
-    ### Custom data loading and reshaping ###
-
-    # prepare X and Y for model.fit()
-
-    data_name = 'scaled_'+trainset_config['stock'] +'_all_stocks_2013-01-02_to_2023-01-01.npy'
-    training_data = np.load(trainset_config['train_data_path'] + data_name)
-    print(training_data.shape)
 
 
-    print('Data loaded')
-    B, L, C = training_data.shape  # B is batchsize, C is the dimension of each audio, L is audio length
 
     if masking == 'rm':
         mask = np.ones((C, L))
@@ -180,8 +187,8 @@ def train(output_directory,
     loss = keras.losses.MeanSquaredError()
     # define callback
     tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=train_log_dir, histogram_freq=1)
-    earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=10)
-    earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='accuracy', mode='max', patience=10)
+    earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=5)
+    earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='accuracy', mode='max', patience=5)
     best_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
                                             filepath=output_directory,
                                             save_weights_only=False,
@@ -204,9 +211,9 @@ def train(output_directory,
                    earlyStop_accu_call_back,
                    best_checkpoint_callback],
     )
-    plt.plot(history.history["loss"], c='blue')
-    plt.plot(history.history["val_loss"], c='orange')
-    plt.plot(history.history["accuracy"], c='red')
+    plt.plot(history.history["loss"], c='blue', lable='Loss')
+    plt.plot(history.history["val_loss"], c='orange', lable='Val_loss')
+    plt.plot(history.history["accuracy"], c='red', lable='Accuracy')
     plt.grid()
     plt.legend()
     plt.title("Training Loss and Accuracy")
@@ -214,8 +221,8 @@ def train(output_directory,
     plt.show()
     net.summary()
 
-    # np.save(log_directory + 'SSSD-' + model_config['alg'] + '/' + current_time + '/observed_data.npy', training_data.numpy())
-    np.save(log_directory + 'SSSD-' + model_config['alg'] + '/' + current_time + '/gt_mask.npy', mask.numpy())
+    # np.save(log_directory + 'SSSD-' + alg + '/' + current_time + '/observed_data.npy', training_data.numpy())
+    np.save(train_log_dir + '/gt_mask.npy', mask.numpy())
 
 
 if __name__ == "__main__":
@@ -225,6 +232,8 @@ if __name__ == "__main__":
                         help='JSON file for configuration')
     parser.add_argument('-ignore_warning', type=str, default=True)
     parser.add_argument('--cuda', type=int, default=0)
+    parser.add_argument('--alg', type=str, default='S4')
+    parser.add_argument('--stock', type=str, default='DJ')
     args = parser.parse_args()
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda)
@@ -273,4 +282,6 @@ if __name__ == "__main__":
         model_config = config['wavenet_config']
 
     tf.debugging.set_log_device_placement(True)
-    train(**train_config)
+    train(**train_config,
+          alg=args.alg,
+          stock=args.stock)

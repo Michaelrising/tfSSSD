@@ -255,9 +255,10 @@ class CSDIImputer:
                                                 best_checkpoint_callback
                                                 ])
 
-            plt.plot(history.history["loss"], c='blue')
-            plt.plot(history.history["val_loss"], c='orange')
+            plt.plot(history.history["loss"], c='blue', lable='Loss')
+            plt.plot(history.history["val_loss"], c='orange', lable='Val_loss')
             plt.grid()
+            plt.legend()
             plt.title("Loss")
             plt.savefig(self.log_path + '/loss.png')
             plt.show()

@@ -4,12 +4,14 @@ from tensorflow import keras
 import matplotlib.pyplot as plt
 
 
-class MegaImputer:
-    def __init__(self, model_path, log_path, config_path):
+class MegaPredictor(keras.Model):
+    def __init__(self, model_path, log_path, config_path, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.model_path=model_path
         self.log_path = log_path
         self.config_path = config_path
         self.model = None
+
 
     def train(self,
               data,

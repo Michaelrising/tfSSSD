@@ -10,8 +10,8 @@ nohup python3 -u evaluate_csdi.py --algo 'Mega' --cuda 0 --data 'stocks' > ../lo
 nohup python3 -u evaluate_csdi.py --algo 'S5' --cuda 1 --data 'stocks' > ../log/stocks/evaluate_csdi_s5.log  2>&1 &
 
 
-nohup python3 -u train-csdi.py > ../log/mujoco/CSDI-S4/train_csdis4.log  2>&1 &
 
-nohup python3 -u train-sssd.py --cuda 1 > ../log/stocks/train_sssd_s4.log  2>&1 &
-nohup python3 -u train-sssd.py > ../log/stocks/train_sssd_s5.log  2>&1 &
-nohup python3 -u train-sssd.py --cuda 1 > ../log/stocks/train_sssd_mega.log  2>&1 &
+
+nohup python3 -u train-sssd.py --cuda 1 --alg "S4" --stock 'DJ' > ../log/stocks/train_sssd_dj_s4.log  2>&1 &
+nohup python3 -u train-sssd.py --cuda 0 --alg "S5" --stock 'DJ'  > ../log/stocks/train_sssd_dj_s5.log  2>&1 &
+nohup python3 -u train-sssd.py --cuda 1 --alg "Mega" --stock 'DJ' > ../log/stocks/train_sssd_dj_mega.log  2>&1 &

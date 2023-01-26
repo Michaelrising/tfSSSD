@@ -273,6 +273,7 @@ class S5Layer(keras.layers.Layer):
                 clip_eigs = False,
                 bidirectional = False,
                 step_rescale = 1.0,
+                dropout=0.0,
                 ):
         super().__init__()
         self.ssm_size = ssm_size
@@ -289,6 +290,12 @@ class S5Layer(keras.layers.Layer):
         self.step_rescale = step_rescale
         self.init_set_up()
         self.setup()
+
+        self.dropout = keras.layers.Dropout(dropout) if dropout > 0.0 else tf.identity
+        self.out_linear = keras.layers.Dense(features)
+        self.activation = keras.activations.gelu
+        self.norm_layer = keras.layers.LayerNormalization(axis=-1)
+
 
     """ The S5 SSM
         Args:
@@ -466,7 +473,6 @@ class S5Layer(keras.layers.Layer):
             ys (float32): the SSM outputs (S5 layer preactivations)      (B, L, H)
             Du + ys: output sequence (float32): (B, L, H)
         """
-        input_sequence = rearrange(input_sequence, 'b h l -> b l h')
         Identity = tf.ones(tf.shape(self.Lambda_re)[0], dtype=tf.complex64)
         Lambda_bar = tf.complex(tf.exp(self.Lambda_re * self.step) * tf.math.cos(self.Lambda_im * self.step), tf.exp(self.Lambda_re * self.step) * tf.math.sin(self.Lambda_im * self.step))
         B_bar = tf.expand_dims(tf.math.divide(1., tf.complex(self.Lambda_re, self.Lambda_im)) * (Lambda_bar - Identity), -1) * tf.complex(self.B[..., 0], self.B[..., 1])
@@ -498,7 +504,13 @@ class S5Layer(keras.layers.Layer):
 
         # Add feedthrough matrix output Du;
         Du = tf.vectorized_map(lambda u: self.D * u, input_sequence)
-        return ys + Du
+        y = ys + Du # B L H
+
+        # add non-linear activation to features
+        y = self.dropout(self.activation(y))  # dropout needs input of (samples, timesteps, channels) which is B L H
+        y = self.out_linear(y) # B L H
+
+        return self.norm_layer(y)  # apply normalization to features
 
     @tf.function
     def binary_operator(self, q_i, q_j):
