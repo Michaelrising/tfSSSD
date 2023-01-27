@@ -225,7 +225,7 @@ class SSSDImputer(keras.Model):
         self.final_conv.add(ZeroConv1d(skip_channels, out_channels))
 
     @tf.function
-    def call(self, input_data):
+    def call(self, input_data, training=True):
         noise, conditional, mask, diffusion_steps = input_data
 
         conditional = conditional * mask

@@ -211,9 +211,9 @@ def train(output_directory,
                    earlyStop_accu_call_back,
                    best_checkpoint_callback],
     )
-    plt.plot(history.history["loss"], c='blue', lable='Loss')
-    plt.plot(history.history["val_loss"], c='orange', lable='Val_loss')
-    plt.plot(history.history["accuracy"], c='red', lable='Accuracy')
+    plt.plot(history.history["loss"], c='blue', label='Loss')
+    plt.plot(history.history["val_loss"], c='orange', label='Val_loss')
+    plt.plot(history.history["accuracy"], c='red', label='Accuracy')
     plt.grid()
     plt.legend()
     plt.title("Training Loss and Accuracy")

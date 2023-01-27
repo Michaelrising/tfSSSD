@@ -1,4 +1,4 @@
-from MegaModel import Mega
+from .MegaModel import Mega
 import tensorflow as tf
 from tensorflow import keras
 import matplotlib.pyplot as plt
@@ -6,10 +6,10 @@ import numpy as np
 
 
 class MegaPredictor:
-    def __init__(self, model_path,
+    def __init__(self,
+                 model_path,
                  log_path,
-                 config_path,
-                 features=256,
+                 features=64,
                  depth=8,
                  chunk_size=-1,
                  *args,
@@ -17,7 +17,6 @@ class MegaPredictor:
         super().__init__(*args, **kwargs)
         self.model_path = model_path
         self.log_path = log_path
-        self.config_path = config_path
         self.model = Mega(features=features,
                           depth=depth,
                           chunk_size=chunk_size)
@@ -25,9 +24,9 @@ class MegaPredictor:
     def train(self,
               data,
               lr=1e-3,
-              amsgrad=False,
-              batch_size=64,
-              epochs=100,
+              amsgrad=True,
+              batch_size=32,
+              epochs=50,
               infer_flag=False):
 
         # define optimizer
@@ -36,11 +35,11 @@ class MegaPredictor:
         loss = keras.losses.MeanSquaredError()
         # define callback
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=self.log_path, histogram_freq=1)
-        earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=10)
+        earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=5)
         # earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=10)
         best_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
             filepath=self.model_path,
-            save_weights_only=False,
+            save_weights_only=True,
             monitor='loss',
             mode='min',
             save_best_only=True,

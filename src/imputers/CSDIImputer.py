@@ -22,7 +22,8 @@ class CSDIImputer:
               difussion_embedding_dim=128,
               beta_start=0.0001,
               beta_end=0.5,
-              num_steps=50,
+              num_steps=200,
+              lmax=100,
               schedule='quad',
               algo='transformer',
               is_unconditional=0,
@@ -91,6 +92,7 @@ class CSDIImputer:
             self.config['diffusion']['num_steps'] = num_steps
             self.config['diffusion']['schedule'] = schedule
             self.config['diffusion']['time_layer'] = algo
+            self.config['diffusion']['lmax'] = lmax
 
             self.config['model'] = {}
             self.config['model']['missing_ratio_or_k'] = missing_ratio_or_k
@@ -187,13 +189,13 @@ class CSDIImputer:
         -wandbiases_entity: weight and biases entity.
         '''
 
-        if masking != self.config['model']['masking']:
-            self.config['model']['masking'] = masking
 
-            config_filename = self.config_path + "/config_csdi_training_" + masking
-            print('configuration file name:', config_filename)
-            with open(config_filename + ".json", "w") as f:
-                json.dump(self.config, f, indent=4)
+        self.config['model']['masking'] = masking
+        self.config['diffusion']['lmax'] = series.shape[1]
+        config_filename = self.config_path + "/config_csdi_training_" + masking
+        print('configuration file name:', config_filename)
+        with open(config_filename + ".json", "w") as f:
+            json.dump(self.config, f, indent=4)
 
         self.model = tfCSDI(series.shape[2], self.config)
 
@@ -209,7 +211,7 @@ class CSDIImputer:
 
         # define callback
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=self.log_path, histogram_freq=1)
-        earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=20)
+        earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=10)
         # earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=10)
         best_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
             filepath=self.model_path,
@@ -251,12 +253,12 @@ class CSDIImputer:
             history = self.model.fit(x=train_data, batch_size=self.batch_size, epochs=self.epochs, validation_split=0.1,
                                      # validation_data=(validation_data,),
                                      callbacks=[tensorboard_callback,
-                                                # earlyStop_loss_callback,
+                                                earlyStop_loss_callback,
                                                 best_checkpoint_callback
                                                 ])
 
-            plt.plot(history.history["loss"], c='blue', lable='Loss')
-            plt.plot(history.history["val_loss"], c='orange', lable='Val_loss')
+            plt.plot(history.history["loss"], c='blue', label='Loss')
+            plt.plot(history.history["val_loss"], c='orange', label='Val_loss')
             plt.grid()
             plt.legend()
             plt.title("Loss")

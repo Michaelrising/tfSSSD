@@ -8,7 +8,7 @@ if __name__ == "__main__":
     parser.add_argument('--data', type=str, default='stocks', help='The data set for training')
     parser.add_argument('--stock', type=str, default='DJ', help='The data set for training: DJ SE ES')
     parser.add_argument('--cuda', type=int, default=1, help='The CUDA device for training')
-    parser.add_argument('--epochs', type=int, default=200, help='The number of epochs for training')
+    parser.add_argument('--epochs', type=int, default=100, help='The number of epochs for training')
     parser.add_argument('--batch_size', type=int, default=32, help='The number of batch size')
     parser.add_argument('--masking', type=str, default='holiday', help='The masking strategy')
     parser.add_argument('--target_strategy', type=str, default='holiday', help='The target strategy')

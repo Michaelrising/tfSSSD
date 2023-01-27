@@ -32,7 +32,7 @@
         "masking": "holiday",
         "missing_k": 90,
         "missing_rate": 0.2,
-        "batch_size": 32,
+        "batch_size": 16,
         "epochs": 50
     },
     "trainset_config":{

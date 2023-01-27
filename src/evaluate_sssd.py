@@ -5,7 +5,7 @@ import numpy as np
 from datetime import datetime
 from utils.util import get_mask_mnr, get_mask_bm, get_mask_rm
 from utils.util import find_max_epoch, print_size, sampling, calc_diffusion_hyperparams, get_mask_holiday
-
+from functools import partial
 from tensorflow import keras
 import tensorflow as tf
 from imputers.DiffWaveImputer import DiffWaveImputer
@@ -24,7 +24,7 @@ def generate(output_directory,
              only_generate_missing,
              batch_size,
              alg,
-             stock='S4',
+             stock,
              model_loc=None):
     """
     Generate data based on ground truth
@@ -44,14 +44,14 @@ def generate(output_directory,
 
     # generate experiment (local) path
     past_time = '00000000-000000'
-    # files_list = os.listdir(output_directory + stock + '/SSSD-' + alg)
-    files_list = os.listdir(output_directory  + '/SSSD-' + alg)
+    files_list = os.listdir(output_directory + stock + '/SSSD-' + alg)
+    # files_list = os.listdir(output_directory   + '/SSSD-' + alg)
     for file in files_list:
         if file.startswith('2023'):
             past_time = max(past_time, file)
     past_time = model_loc if model_loc is not None else past_time
-    # local_path = stock + '/SSSD-' + alg + '/' + past_time + '/generated_samples'
-    local_path = 'SSSD-' + alg + '/' + past_time + '/generated_samples'
+    local_path = stock + '/SSSD-' + alg + '/' + past_time + '/generated_samples'
+    # local_path = 'SSSD-' + alg + '/' + past_time + '/generated_samples'
 
     # Get shared output_directory ready
     output_directory = output_directory + local_path
@@ -67,8 +67,8 @@ def generate(output_directory,
 
 
     # load checkpoint
-    # ckpt_path = os.path.join(ckpt_path, stock +'/SSSD-' + alg + '/' + past_time + '/sssd_model')
-    ckpt_path = ckpt_path + 'SSSD-' + alg + '/' + past_time + '/sssd_model'
+    ckpt_path = ckpt_path + stock +'/SSSD-' + alg + '/' + past_time + '/sssd_model'
+    # ckpt_path = ckpt_path + 'SSSD-' + alg + '/' + past_time + '/sssd_model'
 
     try:
         # reload model
@@ -83,11 +83,10 @@ def generate(output_directory,
     testing_data = np.load(trainset_config['test_data_path'] + data_name)
     # testing_data = testing_data[:int(testing_data.shape[0] / batch_size) * batch_size]
     testing_data = np.array_split(testing_data, testing_data.shape[0] // batch_size + 1, 0)
-    test_gt_masks = np.load('../log/stocks/SSSD-S4/' + past_time + '/gt_mask.npy')
-    test_gt_masks = np.array_split(test_gt_masks.transpose([0, 2,1]), test_gt_masks.shape[0] // batch_size + 1, 0)
+    test_gt_masks = np.load('../log/stocks/'+ stock +'/SSSD-'+ alg + '/'+ past_time + '/sssd_log/gt_mask.npy')
+    test_gt_masks = np.array_split(test_gt_masks.transpose([0, 2, 1]), test_gt_masks.shape[0] // batch_size + 1, 0)
 
     print('Data loaded')
-
 
     all_mse = []
     all_generated_samples=[]
@@ -125,21 +124,22 @@ def generate(output_directory,
                 mask = observed_masks
                 mask[gt_days] = np.zeros_like(observed_masks[0], dtype=bool)
         else:
-            mask = tf.convert_to_tensor(test_gt_masks[i].transpose([0, 2, 1]))
+            observed_masks = (~np.isnan(batch)).astype(float).transpose([0, 2, 1])
+            mask = tf.convert_to_tensor(test_gt_masks[i].transpose([0, 2, 1])) # B C L
         mask = tf.cast(mask, tf.float32)
         batch = tf.cast(tf.convert_to_tensor(np.nan_to_num(batch)), tf.float32)
-        batch = tf.transpose(batch, perm=[0, 2, 1])
+        batch = tf.transpose(batch, perm=[0, 2, 1]) # B C L
 
-        sample_length = batch.shape[2]
-        sample_channels = batch.shape[1]
-        generated_audio = sampling(net, (B, sample_channels, sample_length),
-                                   diffusion_hyperparams,
+        # lmd_generator = lambda i: generator(batch, mask)
+        # generated_audio = tf.vectorized_map(lmd_generator, elems=tf.range(num_samples))
+        generated_audio = sampling(net=net,
+                                   diffusion_hyperparams=diffusion_hyperparams,
                                    num_samples=num_samples,
                                    cond=batch,
                                    mask=mask,
                                    only_generate_missing=only_generate_missing)
 
-        generated_audio = generated_audio.numpy()
+        generated_audio = generated_audio.numpy() # num_sample B L C
         all_generated_samples.append(generated_audio)
         # batch = batch.numpy()
         # mask = mask.numpy()
@@ -157,12 +157,17 @@ def generate(output_directory,
         # np.save(new_out, mask)
         #
         # print('saved generated samples at iteration %s' % ckpt_iter)
-
-        mse = mean_squared_error(generated_audio[~mask.astype(bool)], batch[~mask.astype(bool)])
+        generated_audio_median = np.median(generated_audio, axis=0)
+        target_mask = observed_masks - mask.numpy()
+        if np.sum(target_mask)!= 0:
+            mse = mean_squared_error(generated_audio_median[target_mask.astype(bool)], batch[target_mask.astype(bool)])
+            mse /= np.sum(target_mask)
+        else:
+            mse = 0.
         all_mse.append(mse)
 
-        if i % 5 == 0 and i > 0:
-            pbar.update(5)
+        # if i % 5 == 0 and i > 0:
+        pbar.update(1)
 
     print('Total MSE:', mean(all_mse))
     imputed_data = tf.stack(all_generated_samples)
@@ -175,12 +180,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', type=str, default='./config/config_SSSD_stocks.json',
                         help='JSON file for configuration')
-    parser.add_argument('-n', '--num_samples', type=int, default=50,
+    parser.add_argument('-n', '--num_samples', type=int, default=25,
                         help='Number of utterances to be generated')
     parser.add_argument('--ignore_warning', type=str, default=True)
     parser.add_argument('--cuda', type=int, default=0)
     parser.add_argument('--alg', type=str, default='S4')
-    parser.add_argument('--stock', type=str, default='DJ')
+    parser.add_argument('--stock', type=str, default='SE')
     args = parser.parse_args()
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda)

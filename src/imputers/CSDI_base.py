@@ -298,7 +298,8 @@ class diff_CSDI(keras.Model): #layers.Layer
                     channels=self.channels,
                     diffusion_embedding_dim=config["diffusion_embedding_dim"],
                     nheads=config["nheads"],
-                    time_layer=config['time_layer']
+                    time_layer=config['time_layer'],
+                    lmax=config['lmax'],
                 )
             )
 
@@ -338,7 +339,7 @@ class diff_CSDI(keras.Model): #layers.Layer
 
 
 class ResidualBlock(keras.layers.Layer):
-    def __init__(self, side_dim, channels, diffusion_embedding_dim, nheads, time_layer='transformer'):
+    def __init__(self, side_dim, channels, diffusion_embedding_dim, nheads, time_layer='transformer', lmax=None):
         super().__init__()
         self.time_layer_type=time_layer
         self.diffusion_projection = keras.layers.Dense(channels)
@@ -359,7 +360,7 @@ class ResidualBlock(keras.layers.Layer):
                                                                   activation='gelu',
                                                                   use_bias = True)) # (batch_size, input_length, hidden_size)
         elif time_layer=='S4':
-            self.time_layer = S4Layer(features=channels, lmax=100)
+            self.time_layer = S4Layer(features=channels, lmax=lmax)
         elif time_layer == 'S5':
             self.time_layer = S5Layer(ssm_size=16, features=channels) # ssm_size has Order(H)
         elif time_layer == 'Mega':

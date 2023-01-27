@@ -362,6 +362,10 @@ class Mega(keras.Model):
     ):
         super().__init__()
         # self.token_emb = keras.layers.Embedding(num_tokens, dim)
+        self.input_linear = keras.layers.Dense(features)
+        self.output_f = keras.Sequential()
+        self.output_f.add(keras.layers.Conv1D(filters=57, kernel_size=2, data_format='channels_first'))
+        self.output_f.add(keras.layers.Dense(6, activation=keras.activations.relu))
         self.pre_norm = pre_norm
 
         self.mega_layers = []
@@ -378,7 +382,7 @@ class Mega(keras.Model):
         # x shape: B L H
         pre_norm = self.pre_norm
         post_norm = not self.pre_norm
-
+        x = self.input_linear(x)
         # x = self.token_emb(x)
 
         for mega_layer, mega_norm, ff, ff_norm in self.mega_layers:
@@ -396,5 +400,5 @@ class Mega(keras.Model):
 
             x = ff_maybe_postnorm(x)
 
-        return x
+        return self.output_f(x)
 
