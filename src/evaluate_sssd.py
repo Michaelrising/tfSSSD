@@ -72,8 +72,8 @@ def generate(output_directory,
 
     try:
         # reload model
-        # net = keras.models.load_model(ckpt_path)
-        net = SSSDImputer(**model_config, alg=alg)
+        net = keras.models.load_model(ckpt_path)
+        # net = SSSDImputer(**model_config, alg=alg)
         print('Successfully loaded model saved at time: {}!'.format(past_time))
     except:
         raise Exception('No valid model found')
@@ -166,24 +166,24 @@ def generate(output_directory,
             mse = 0.
         all_mse.append(mse)
 
-        # if i % 5 == 0 and i > 0:
-        pbar.update(1)
+        if i % 5 == 0 and i > 0:
+            pbar.update(5)
 
     print('Total MSE:', mean(all_mse))
-    imputed_data = tf.stack(all_generated_samples)
+    imputed_data = np.stack(all_generated_samples)
     imputations = rearrange(imputed_data, 'i j b k l -> (i b) j l k') # i: total_timestamps // num_samples, j: num_samples
-    imp_data_numpy = imputations.numpy() # B num_samples length feature
-    np.save(output_directory + '/imputed_data.npy', imp_data_numpy)
+    # B num_samples length feature
+    np.save(output_directory + '/imputed_data.npy', imputations)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', type=str, default='./config/config_SSSD_stocks.json',
                         help='JSON file for configuration')
-    parser.add_argument('-n', '--num_samples', type=int, default=25,
+    parser.add_argument('-n', '--num_samples', type=int, default=10,
                         help='Number of utterances to be generated')
     parser.add_argument('--ignore_warning', type=str, default=True)
-    parser.add_argument('--cuda', type=int, default=0)
+    parser.add_argument('--cuda', type=int, default=1)
     parser.add_argument('--alg', type=str, default='S4')
     parser.add_argument('--stock', type=str, default='SE')
     args = parser.parse_args()
@@ -240,7 +240,7 @@ if __name__ == "__main__":
              masking=train_config["masking"],
              missing_rate=train_config["missing_k"],
              only_generate_missing=train_config["only_generate_missing"],
-             batch_size=train_config['batch_size'],
+             batch_size=64,#train_config['batch_size'],
              alg=args.alg,
              stock=args.stock,
              model_loc=None,

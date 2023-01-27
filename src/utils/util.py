@@ -5,6 +5,7 @@ from tensorflow import keras
 import random
 from prettytable import PrettyTable
 import keras.backend as K
+from tqdm import tqdm
 
 class SetLearningRate:
     """层的一个包装，用来设置当前层的学习率
@@ -171,7 +172,7 @@ def calc_diffusion_hyperparams(T, beta_0, beta_T):
     diffusion_hyperparams = _dh
     return diffusion_hyperparams
 
-@tf.function
+# @tf.function
 def sampling(net, diffusion_hyperparams, only_generate_missing, cond, mask, num_samples):
     """
     Perform the complete sampling step according to p(x_0|x_T) = \prod_{t=1}^T p_{\theta}(x_{t-1}|x_t)
@@ -194,35 +195,47 @@ def sampling(net, diffusion_hyperparams, only_generate_missing, cond, mask, num_
                                                  T, Alpha, Alpha_bar, Sigma, size,
                                                  only_generate_missing, cond,
                                                  mask)
-    imputed_samples = tf.map_fn(current_sample_generator, elems=[tf.range(num_samples)], fn_output_signature=tf.TensorSpec(dtype=tf.float32, shape=size), parallel_iterations=5)
-    return imputed_samples
+    # imputed_samples = tf.map_fn(current_sample_generator,
+    #                             elems=[tf.range(num_samples)],
+    #                             fn_output_signature=tf.TensorSpec(dtype=tf.float32, shape=size),
+    #                             parallel_iterations=num_samples,
+    #                             )
+    # return imputed_samples
+    pbar = tqdm(total=num_samples)
     # imputed_samples = tf.TensorArray(dtype=tf.float32, size=num_samples)
-    # sample_i = 0
-    # while sample_i < num_samples:
-    #     current_sample = current_sample_generator(sample_i)
-    #     imputed_samples = imputed_samples.write(sample_i, current_sample)
-    #     sample_i += 1
-    # return imputed_samples.stack()
+    imputed_samples = []
+    sample_i = 0
+    while sample_i < num_samples:
+        current_sample = current_sample_generator(sample_i)
+        imputed_samples.append(current_sample) # = imputed_samples.write(sample_i, current_sample)
+        sample_i += 1
+        pbar.update(1)
+    return tf.stack(imputed_samples)
 
 
-@tf.function
+# @tf.function
 def imputer(net, T, Alpha, Alpha_bar, Sigma, size, only_generate_missing, cond, mask):
+    # pbar = tqdm(total=T)
     t = T - 1
-    current_sample = tf.TensorArray(dtype=tf.float32, size=1, clear_after_read=False)
-    current_sample = current_sample.write(0, tf.random.normal(size, dtype=cond.dtype))  # current_sample.write(0, tf.random.normal(size, dtype=cond.dtype))
+    # current_sample = tf.TensorArray(dtype=tf.float32, size=1, clear_after_read=False)
+    # current_sample = current_sample.write(0, tf.random.normal(size, dtype=cond.dtype))
+    current_sample = tf.random.normal(size, dtype=cond.dtype)
     while t >= 0:
-        if only_generate_missing == 1:
-            current_sample = current_sample.write(0, current_sample.read(0) * (1.0 - mask) + cond * mask)
+        # if only_generate_missing == 1:
+        current_sample = current_sample * (1.0 - mask) + cond * mask
         diffusion_steps = tf.cast(t * tf.ones((size[0], 1)), tf.int32)  # use the corresponding reverse step
-        epsilon_theta = tf.stop_gradient(net.call(input_data=(current_sample.read(0), cond, mask, diffusion_steps),
+        epsilon_theta = tf.stop_gradient(net(input_data=(current_sample, cond, mask, diffusion_steps),
                                              training=False))  # predict \epsilon according to \epsilon_\theta
         # update x_{t-1} to \mu_\theta(x_t)
-        current_sample = current_sample.write(0, (current_sample.read(0) - (1 - Alpha[t]) / tf.math.sqrt(
-            1 - Alpha_bar[t]) * epsilon_theta) / tf.math.sqrt(Alpha[t]))
+        current_sample = (current_sample - (1 - Alpha[t]) / tf.math.sqrt(
+            1 - Alpha_bar[t]) * epsilon_theta) / tf.math.sqrt(Alpha[t])
         if t > 0:
-            current_sample = current_sample.write(0, current_sample.read(0) + Sigma[t] * std_normal(size))  # add the variance term to x_{t-1}
+            current_sample = current_sample + Sigma[t] * std_normal(size)
+        # add the variance term to x_{t-1}
+
         t -= 1
-    return current_sample.read(0)
+        # pbar.update(1)
+    return current_sample
 
 
 def training_loss(net, loss_fn, X, diffusion_hyperparams, only_generate_missing=1):
