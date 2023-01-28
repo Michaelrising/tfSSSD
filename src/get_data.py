@@ -43,7 +43,7 @@ for i, index in enumerate(list(stocks_dic.keys())):
         else:
 
             index0 = all_dates.isin(data.index)
-            data_w_na = pd.DataFrame(index = all_dates, columns=['Date', 'High', 'Low', 'Close', 'Adj Close', 'Volume'])
+            data_w_na = pd.DataFrame(index = all_dates, columns=['Date', "Open", 'High', 'Low', 'Close', 'Adj Close', 'Volume'])
             data_w_na.iloc[index0] = data.copy(deep=True)
             data_w_na.to_csv(file_name)
             print(data_w_na.shape)

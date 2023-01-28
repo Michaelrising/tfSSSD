@@ -209,7 +209,8 @@ def sampling(net, diffusion_hyperparams, only_generate_missing, cond, mask, num_
         current_sample = current_sample_generator(sample_i)
         imputed_samples.append(current_sample) # = imputed_samples.write(sample_i, current_sample)
         sample_i += 1
-        pbar.update(1)
+        if sample_i % 2 == 0 and sample_i > 0:
+            pbar.update(2)
     return tf.stack(imputed_samples)
 
 

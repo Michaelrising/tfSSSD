@@ -72,7 +72,7 @@ def train(output_directory,
 
     # generate experiment (local) path
     current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-    local_path = stock + '/SSSD-' + alg + '/' + current_time + '/sssd_model'
+    local_path = stock + '/SSSD-' + alg + '/' + current_time + '_T_{}_Layers_{}'.format(diffusion_config['T'], model_config['num_res_layers'])
 
     # Get shared output_directory ready
     output_directory = os.path.join(output_directory, local_path)
@@ -110,7 +110,7 @@ def train(output_directory,
 
     # set up log writer
 
-    train_log_dir = log_directory + stock +'/SSSD-' + alg + '/' + current_time + '/sssd_log'
+    train_log_dir = log_directory + stock +'/SSSD-' + alg + '/' + current_time + '_T_{}_Layers_{}'.format(diffusion_config['T'], model_config['num_res_layers'])
     # train_summary_writer = tf.summary.create_file_writer(train_log_dir)
 
     # load checkpoint

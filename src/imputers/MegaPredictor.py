@@ -70,7 +70,7 @@ class MegaPredictor:
             plt.savefig(self.log_path + '/loss.png')
             plt.show()
 
-        self.model.built_after_run()
+        # self.model.built_after_run()
         self.model.summary()
 
 

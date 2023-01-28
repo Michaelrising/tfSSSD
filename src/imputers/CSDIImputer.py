@@ -369,7 +369,7 @@ class CSDIImputer:
 
         return tf.stack(all_generated_samples) #, mse_total, mae_total, evalpoints_total
 
-    @tf.function
+    # @tf.function
     def impute(self, batch, n_samples):
         observed_data, observed_mask, gt_mask = batch
         cond_mask = gt_mask

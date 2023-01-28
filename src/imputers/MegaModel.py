@@ -365,6 +365,7 @@ class Mega(keras.Model):
         self.input_linear = keras.layers.Dense(features)
         self.output_f = keras.Sequential()
         self.output_f.add(keras.layers.Conv1D(filters=57, kernel_size=2, data_format='channels_first'))
+        self.output_f.add(keras.layers.LayerNormalization(axis=-1))
         self.output_f.add(keras.layers.Dense(6, activation=keras.activations.relu))
         self.pre_norm = pre_norm
 

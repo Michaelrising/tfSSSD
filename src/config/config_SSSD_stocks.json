@@ -1,13 +1,13 @@
 {
     "diffusion_config":{
-        "T": 200,
+        "T": 100,
         "beta_0": 0.0001,
         "beta_T": 0.02
     },
     "wavenet_config": {
         "in_channels": 6,
         "out_channels":6,
-        "num_res_layers": 36,
+        "num_res_layers": 18,
         "res_channels": 256,
         "skip_channels": 256,
         "diffusion_step_embed_dim_in": 128,
@@ -26,14 +26,14 @@
         "iters_per_ckpt": 200,
         "iters_per_logging": 20,
         "n_iters": 150000,
-        "learning_rate": 2e-4,
+        "learning_rate": 1e-3,
         "only_generate_missing": 1,
         "use_model": 2,
         "masking": "holiday",
         "missing_k": 90,
         "missing_rate": 0.2,
         "batch_size": 16,
-        "epochs": 50
+        "epochs": 20
     },
     "trainset_config":{
         "train_data_path": "../datasets/Stocks/",

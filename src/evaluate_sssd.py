@@ -43,11 +43,11 @@ def generate(output_directory,
     """
 
     # generate experiment (local) path
-    past_time = '00000000-000000'
+    past_time = '00000000-000000'+ '_T_{}_Layers_{}'.format(diffusion_config['T'], model_config['num_res_layers'])
     files_list = os.listdir(output_directory + stock + '/SSSD-' + alg)
     # files_list = os.listdir(output_directory   + '/SSSD-' + alg)
     for file in files_list:
-        if file.startswith('2023'):
+        if file.startswith('2023') and file.endswith('_T_{}_Layers_{}'.format(diffusion_config['T'], model_config['num_res_layers'])):
             past_time = max(past_time, file)
     past_time = model_loc if model_loc is not None else past_time
     local_path = stock + '/SSSD-' + alg + '/' + past_time + '/generated_samples'
@@ -67,7 +67,7 @@ def generate(output_directory,
 
 
     # load checkpoint
-    ckpt_path = ckpt_path + stock +'/SSSD-' + alg + '/' + past_time + '/sssd_model'
+    ckpt_path = ckpt_path + stock +'/SSSD-' + alg + '/' + past_time
     # ckpt_path = ckpt_path + 'SSSD-' + alg + '/' + past_time + '/sssd_model'
 
     try:
@@ -83,7 +83,7 @@ def generate(output_directory,
     testing_data = np.load(trainset_config['test_data_path'] + data_name)
     # testing_data = testing_data[:int(testing_data.shape[0] / batch_size) * batch_size]
     testing_data = np.array_split(testing_data, testing_data.shape[0] // batch_size + 1, 0)
-    test_gt_masks = np.load('../log/stocks/'+ stock +'/SSSD-'+ alg + '/'+ past_time + '/sssd_log/gt_mask.npy')
+    test_gt_masks = np.load('../log/stocks/'+ stock +'/SSSD-'+ alg + '/'+ past_time +'/gt_mask.npy')
     test_gt_masks = np.array_split(test_gt_masks.transpose([0, 2, 1]), test_gt_masks.shape[0] // batch_size + 1, 0)
 
     print('Data loaded')
@@ -162,18 +162,13 @@ def generate(output_directory,
         if np.sum(target_mask)!= 0:
             mse = mean_squared_error(generated_audio_median[target_mask.astype(bool)], batch[target_mask.astype(bool)])
             mse /= np.sum(target_mask)
-        else:
-            mse = 0.
-        all_mse.append(mse)
-
-        if i % 5 == 0 and i > 0:
-            pbar.update(5)
+            all_mse.append(mse)
+        pbar.update(1)
 
     print('Total MSE:', mean(all_mse))
-    imputed_data = np.stack(all_generated_samples)
-    imputations = rearrange(imputed_data, 'i j b k l -> (i b) j l k') # i: total_timestamps // num_samples, j: num_samples
-    # B num_samples length feature
-    np.save(output_directory + '/imputed_data.npy', imputations)
+    imputed_data = np.concatenate(all_generated_samples, axis=1) # num_samples x 2609 x L x C
+    # num_samples B  length feature
+    np.save(output_directory + '/imputed_data.npy', imputed_data)
 
 
 if __name__ == "__main__":
@@ -184,8 +179,9 @@ if __name__ == "__main__":
                         help='Number of utterances to be generated')
     parser.add_argument('--ignore_warning', type=str, default=True)
     parser.add_argument('--cuda', type=int, default=1)
-    parser.add_argument('--alg', type=str, default='S4')
-    parser.add_argument('--stock', type=str, default='SE')
+    parser.add_argument('--algo', type=str, default='S5')
+    parser.add_argument('--stock', type=str, default='DJ')
+    parser.add_argument('--batch_size', type=int, default=128)
     args = parser.parse_args()
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda)
@@ -240,8 +236,8 @@ if __name__ == "__main__":
              masking=train_config["masking"],
              missing_rate=train_config["missing_k"],
              only_generate_missing=train_config["only_generate_missing"],
-             batch_size=64,#train_config['batch_size'],
-             alg=args.alg,
+             batch_size=args.batch_size,#train_config['batch_size'],
+             alg=args.algo,
              stock=args.stock,
              model_loc=None,
              )
