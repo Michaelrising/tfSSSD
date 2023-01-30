@@ -1,65 +1,0 @@
-nohup: ignoring input
-2023-01-25 19:36:29.009418: I tensorflow/core/platform/cpu_feature_guard.cc:193] This TensorFlow binary is optimized with oneAPI Deep Neural Network Library (oneDNN) to use the following CPU instructions in performance-critical operations:  AVX2 AVX512F AVX512_VNNI FMA
-To enable them in other operations, rebuild TensorFlow with the appropriate compiler flags.
-2023-01-25 19:36:29.126096: I tensorflow/core/util/port.cc:104] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
-2023-01-25 19:36:29.783084: W tensorflow/compiler/xla/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libnvinfer.so.7'; dlerror: libnvinfer.so.7: cannot open shared object file: No such file or directory
-2023-01-25 19:36:29.783140: W tensorflow/compiler/xla/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libnvinfer_plugin.so.7'; dlerror: libnvinfer_plugin.so.7: cannot open shared object file: No such file or directory
-2023-01-25 19:36:29.783147: W tensorflow/compiler/tf2tensorrt/utils/py_utils.cc:38] TF-TRT Warning: Cannot dlopen some TensorRT libraries. If you would like to use Nvidia GPU with TensorRT, please make sure the missing libraries mentioned above are installed properly.
-2023-01-25 19:36:34.470461: I tensorflow/core/common_runtime/gpu/gpu_process_state.cc:222] Using CUDA malloc Async allocator for GPU: 0
-2023-01-25 19:36:34.470979: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1613] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 22242 MB memory:  -> device: 0, name: NVIDIA GeForce RTX 3090, pci bus id: 0000:68:00.0, compute capability: 8.6
-1 Physical GPUs, 1 Logical GPUs
-Loaded Data from:20230125-155249
-{
-    "train": {
-        "epochs": 50,
-        "batch_size": 64,
-        "lr": 0.0005,
-        "path_save": "../results/stocks/CSDI-S5/20230125-155249/csdi_model"
-    },
-    "diffusion": {
-        "layers": 4,
-        "channels": 64,
-        "nheads": 8,
-        "diffusion_embedding_dim": 128,
-        "beta_start": 0.0001,
-        "beta_end": 0.5,
-        "num_steps": 50,
-        "schedule": "quad",
-        "time_layer": "S5"
-    },
-    "model": {
-        "missing_ratio_or_k": 0.1,
-        "is_unconditional": 0,
-        "timeemb": 128,
-        "featureemb": 16,
-        "target_strategy": "holiday",
-        "masking": "holiday"
-    }
-}
-configuration file name: ./config//config_csdi_training_holiday
-==================================================
-======================CSDI-S5=====================
-==================================================
-2023-01-25 19:36:35.965301: W tensorflow/core/common_runtime/graph_constructor.cc:805] Node 'loop_body_2/scan/while/PartitionedCall/pfor/PartitionedCall' has 2 outputs but the _output_shapes attribute specifies shapes for 13 outputs. Output shapes may be inaccurate.
-2023-01-25 19:36:35.970468: W tensorflow/core/common_runtime/graph_constructor.cc:805] Node 'while/while_body/cond/PartitionedCall' has 9 outputs but the _output_shapes attribute specifies shapes for 25 outputs. Output shapes may be inaccurate.
-2023-01-25 19:36:36.329144: W tensorflow/core/common_runtime/graph_constructor.cc:805] Node 'loop_body_2/scan/while/PartitionedCall/pfor/PartitionedCall' has 2 outputs but the _output_shapes attribute specifies shapes for 13 outputs. Output shapes may be inaccurate.
-2023-01-25 19:36:36.334179: W tensorflow/core/common_runtime/graph_constructor.cc:805] Node 'while/while_body/cond/PartitionedCall' has 9 outputs but the _output_shapes attribute specifies shapes for 25 outputs. Output shapes may be inaccurate.
-2023-01-25 19:36:36.945573: W tensorflow/core/common_runtime/graph_constructor.cc:805] Node 'loop_body_2/scan/while/PartitionedCall/pfor/PartitionedCall' has 2 outputs but the _output_shapes attribute specifies shapes for 13 outputs. Output shapes may be inaccurate.
-2023-01-25 19:36:36.950794: W tensorflow/core/common_runtime/graph_constructor.cc:805] Node 'while/while_body/cond/PartitionedCall' has 9 outputs but the _output_shapes attribute specifies shapes for 25 outputs. Output shapes may be inaccurate.
-2023-01-25 19:36:37.229401: W tensorflow/core/common_runtime/graph_constructor.cc:805] Node 'while/while_body/cond' has 9 outputs but the _output_shapes attribute specifies shapes for 25 outputs. Output shapes may be inaccurate.
-2023-01-25 19:36:37.479084: W tensorflow/core/common_runtime/graph_constructor.cc:805] Node 'while/while_body/cond' has 9 outputs but the _output_shapes attribute specifies shapes for 25 outputs. Output shapes may be inaccurate.
-2023-01-25 19:36:38.017982: W tensorflow/core/common_runtime/graph_constructor.cc:805] Node 'loop_body_2/scan/while/PartitionedCall/pfor/PartitionedCall' has 2 outputs but the _output_shapes attribute specifies shapes for 13 outputs. Output shapes may be inaccurate.
-2023-01-25 19:36:38.023158: W tensorflow/core/common_runtime/graph_constructor.cc:805] Node 'while/while_body/cond/PartitionedCall' has 9 outputs but the _output_shapes attribute specifies shapes for 25 outputs. Output shapes may be inaccurate.
-2023-01-25 19:36:38.207146: W tensorflow/core/common_runtime/graph_constructor.cc:805] Node 'while/while_body/cond' has 9 outputs but the _output_shapes attribute specifies shapes for 25 outputs. Output shapes may be inaccurate.
-2023-01-25 19:36:38.406528: W tensorflow/core/common_runtime/graph_constructor.cc:805] Node 'while/while_body/cond' has 9 outputs but the _output_shapes attribute specifies shapes for 25 outputs. Output shapes may be inaccurate.
-2023-01-25 19:36:38.881179: W tensorflow/core/common_runtime/graph_constructor.cc:805] Node 'while' has 22 outputs but the _output_shapes attribute specifies shapes for 39 outputs. Output shapes may be inaccurate.
-2023-01-25 19:36:38.914976: W tensorflow/core/common_runtime/graph_constructor.cc:805] Node 'loop_body_2/scan/while/pfor/PartitionedCall' has 9 outputs but the _output_shapes attribute specifies shapes for 34 outputs. Output shapes may be inaccurate.
-2023-01-25 19:36:39.694592: W tensorflow/core/common_runtime/graph_constructor.cc:805] Node 'while' has 22 outputs but the _output_shapes attribute specifies shapes for 39 outputs. Output shapes may be inaccurate.
-2023-01-25 19:36:39.727840: W tensorflow/core/common_runtime/graph_constructor.cc:805] Node 'loop_body_2/scan/while/pfor/PartitionedCall' has 9 outputs but the _output_shapes attribute specifies shapes for 34 outputs. Output shapes may be inaccurate.
-2023-01-25 19:36:40.108185: W tensorflow/core/common_runtime/graph_constructor.cc:805] Node 'while' has 22 outputs but the _output_shapes attribute specifies shapes for 39 outputs. Output shapes may be inaccurate.
-2023-01-25 19:36:40.141945: W tensorflow/core/common_runtime/graph_constructor.cc:805] Node 'loop_body_2/scan/while/pfor/PartitionedCall' has 9 outputs but the _output_shapes attribute specifies shapes for 34 outputs. Output shapes may be inaccurate.
-2023-01-25 19:36:41.746976: W tensorflow/core/common_runtime/graph_constructor.cc:805] Node 'while' has 22 outputs but the _output_shapes attribute specifies shapes for 39 outputs. Output shapes may be inaccurate.
-2023-01-25 19:36:41.780309: W tensorflow/core/common_runtime/graph_constructor.cc:805] Node 'loop_body_2/scan/while/pfor/PartitionedCall' has 9 outputs but the _output_shapes attribute specifies shapes for 34 outputs. Output shapes may be inaccurate.
-  0%|          | 0/40.0 [00:00<?, ?it/s]2023-01-25 19:38:45.271740: I tensorflow/compiler/xla/stream_executor/cuda/cuda_blas.cc:630] TensorFloat-32 will be used for the matrix multiplication. This will only be logged once.
-2023-01-25 19:38:45.889489: I tensorflow/compiler/xla/stream_executor/cuda/cuda_dnn.cc:428] Loaded cuDNN version 8202
- 12%|█▎        | 5/40.0 [08:14<57:43, 98.94s/it] 25%|██▌       | 10/40.0 [15:11<44:51, 89.73s/it] 38%|███▊      | 15/40.0 [20:37<32:43, 78.53s/it] 50%|█████     | 20/40.0 [25:52<24:08, 72.41s/it] 62%|██████▎   | 25/40.0 [31:06<17:14, 68.95s/it] 75%|███████▌  | 30/40.0 [36:19<11:07, 66.80s/it] 88%|████████▊ | 35/40.0 [41:31<05:26, 65.38s/it]100%|██████████| 40/40.0 [46:45<00:00, 64.56s/it]100%|██████████| 40/40.0 [46:45<00:00, 70.15s/it]

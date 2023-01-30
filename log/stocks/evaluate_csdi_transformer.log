@@ -1,45 +1,0 @@
-nohup: ignoring input
-2023-01-25 18:20:40.377432: I tensorflow/core/platform/cpu_feature_guard.cc:193] This TensorFlow binary is optimized with oneAPI Deep Neural Network Library (oneDNN) to use the following CPU instructions in performance-critical operations:  AVX2 AVX512F AVX512_VNNI FMA
-To enable them in other operations, rebuild TensorFlow with the appropriate compiler flags.
-2023-01-25 18:20:40.521691: I tensorflow/core/util/port.cc:104] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
-2023-01-25 18:20:41.264208: W tensorflow/compiler/xla/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libnvinfer.so.7'; dlerror: libnvinfer.so.7: cannot open shared object file: No such file or directory
-2023-01-25 18:20:41.264269: W tensorflow/compiler/xla/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libnvinfer_plugin.so.7'; dlerror: libnvinfer_plugin.so.7: cannot open shared object file: No such file or directory
-2023-01-25 18:20:41.264275: W tensorflow/compiler/tf2tensorrt/utils/py_utils.cc:38] TF-TRT Warning: Cannot dlopen some TensorRT libraries. If you would like to use Nvidia GPU with TensorRT, please make sure the missing libraries mentioned above are installed properly.
-2023-01-25 18:20:45.500891: I tensorflow/core/common_runtime/gpu/gpu_process_state.cc:222] Using CUDA malloc Async allocator for GPU: 0
-2023-01-25 18:20:45.501427: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1613] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 22242 MB memory:  -> device: 0, name: NVIDIA GeForce RTX 3090, pci bus id: 0000:68:00.0, compute capability: 8.6
-1 Physical GPUs, 1 Logical GPUs
-Loaded Data from:20230125-155358
-{
-    "train": {
-        "epochs": 50,
-        "batch_size": 64,
-        "lr": 0.0005,
-        "path_save": "../results/stocks/CSDI-transformer/20230125-155358/csdi_model"
-    },
-    "diffusion": {
-        "layers": 4,
-        "channels": 64,
-        "nheads": 8,
-        "diffusion_embedding_dim": 128,
-        "beta_start": 0.0001,
-        "beta_end": 0.5,
-        "num_steps": 50,
-        "schedule": "quad",
-        "time_layer": "transformer"
-    },
-    "model": {
-        "missing_ratio_or_k": 0.1,
-        "is_unconditional": 0,
-        "timeemb": 128,
-        "featureemb": 16,
-        "target_strategy": "holiday",
-        "masking": "holiday"
-    }
-}
-configuration file name: ./config//config_csdi_training_holiday
-==================================================
-=================CSDI-TransFormer=================
-==================================================
-  0%|          | 0/40.0 [00:00<?, ?it/s]2023-01-25 18:22:08.424209: I tensorflow/compiler/xla/stream_executor/cuda/cuda_blas.cc:630] TensorFloat-32 will be used for the matrix multiplication. This will only be logged once.
-2023-01-25 18:22:09.190039: I tensorflow/compiler/xla/stream_executor/cuda/cuda_dnn.cc:428] Loaded cuDNN version 8202
- 12%|█▎        | 5/40.0 [03:27<24:15, 41.59s/it] 25%|██▌       | 10/40.0 [05:42<16:27, 32.92s/it] 38%|███▊      | 15/40.0 [07:55<12:32, 30.10s/it] 50%|█████     | 20/40.0 [10:08<09:33, 28.70s/it] 62%|██████▎   | 25/40.0 [12:22<07:00, 28.01s/it] 75%|███████▌  | 30/40.0 [14:34<04:34, 27.44s/it] 88%|████████▊ | 35/40.0 [16:50<02:16, 27.39s/it]100%|██████████| 40/40.0 [19:03<00:00, 27.13s/it]100%|██████████| 40/40.0 [19:03<00:00, 28.59s/it]

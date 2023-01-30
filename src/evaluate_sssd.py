@@ -79,12 +79,23 @@ def generate(output_directory,
         raise Exception('No valid model found')
 
     ### Custom data loading and reshaping ###
-    data_name = 'scaled_' + stock + '_all_stocks_2013-01-02_to_2023-01-01.npy'
-    testing_data = np.load(trainset_config['test_data_path'] + data_name)
-    # testing_data = testing_data[:int(testing_data.shape[0] / batch_size) * batch_size]
-    testing_data = np.array_split(testing_data, testing_data.shape[0] // batch_size + 1, 0)
+        # prepare X and Y for model.fit()
+    if stock == 'all':
+        train_data = []
+        for ticker in ['US', 'EU', 'HK']:
+            data_name = 'scaled_' + ticker + '_all_stocks_2018-01-02_to_2023-01-01.npy'
+            ticker_data = np.load(trainset_config['train_data_path'] + data_name, allow_pickle=True)[305:]
+            train_data.append(ticker_data.astype(np.float32))
+        testing_data = np.concatenate(train_data, axis=1)
+    else:
+        data_name = 'scaled_' + stock + '_all_stocks_2013-01-02_to_2023-01-01.npy'
+        testing_data = np.load(trainset_config['train_data_path'] + data_name)  # [1609:]
+
+    L, N, C = testing_data.shape
+
+    testing_data = np.array_split(testing_data.transpose([1, 2, 0]),  N // batch_size + 1, 0) # N C L
     test_gt_masks = np.load('../log/stocks/'+ stock +'/SSSD-'+ alg + '/'+ past_time +'/gt_mask.npy')
-    test_gt_masks = np.array_split(test_gt_masks.transpose([0, 2, 1]), test_gt_masks.shape[0] // batch_size + 1, 0)
+    test_gt_masks = np.array_split(test_gt_masks,  N // batch_size + 1, 0)# N C L
 
     print('Data loaded')
 
@@ -92,46 +103,12 @@ def generate(output_directory,
     all_generated_samples=[]
     pbar = tqdm(total=len(testing_data))
     for i, batch in enumerate(testing_data):
-        B, L, C = batch.shape  # B is batchsize, C is the dimension of each audio, L is audio length
-        if test_gt_masks is None:
-            if masking == 'rm':
-                mask = np.ones((C, L))
-                # mask = tf.Variable(mask_array, trainable=False)
-                length_index = np.arange(mask.shape[0])  # lenght of series indexes
-                for channel in range(mask.shape[1]):
-                    # perm = torch.randperm(len(length_index))
-                    perm = np.random.permutation(len(length_index))
-
-                    sample_num = int(mask.shape[0] * missing_rate)
-                    idx = perm[0:sample_num]
-                    mask[:, channel][idx] = 0
-                mask = tf.transpose(tf.convert_to_tensor(mask, dtype=tf.float32), perm=[1, 0])
-                mask = tf.tile(tf.expand_dims(mask, 0), [B, 1, 1])
-            elif masking == 'holiday':
-                observed_masks = ~np.isnan(batch)
-                holidays = np.unique(np.where(~observed_masks)[0])
-                gt_days = holidays
-
-                if holidays.shape == 0:
-                    random_day = np.random.choice(np.arange(0, B),
-                                                  size=int(np.ceil(B / 16)), replace=False)
-                    gt_days = np.append(gt_days, random_day)
-                else:
-                    random_day = np.random.choice(np.arange(0, B))
-                    gt_days = np.append(gt_days, random_day)
-
-                gt_days = np.unique(gt_days)
-                mask = observed_masks
-                mask[gt_days] = np.zeros_like(observed_masks[0], dtype=bool)
-        else:
-            observed_masks = (~np.isnan(batch)).astype(float).transpose([0, 2, 1])
-            mask = tf.convert_to_tensor(test_gt_masks[i].transpose([0, 2, 1])) # B C L
+        observed_masks = (~np.isnan(batch)).astype(float) #.transpose([0, 2, 1])
+        mask = tf.convert_to_tensor(test_gt_masks[i])
         mask = tf.cast(mask, tf.float32)
         batch = tf.cast(tf.convert_to_tensor(np.nan_to_num(batch)), tf.float32)
-        batch = tf.transpose(batch, perm=[0, 2, 1]) # B C L
 
-        # lmd_generator = lambda i: generator(batch, mask)
-        # generated_audio = tf.vectorized_map(lmd_generator, elems=tf.range(num_samples))
+
         generated_audio = sampling(net=net,
                                    diffusion_hyperparams=diffusion_hyperparams,
                                    num_samples=num_samples,
@@ -139,29 +116,12 @@ def generate(output_directory,
                                    mask=mask,
                                    only_generate_missing=only_generate_missing)
 
-        generated_audio = generated_audio.numpy() # num_sample B L C
+        generated_audio = generated_audio.numpy() # num_sample N L C
         all_generated_samples.append(generated_audio)
-        # batch = batch.numpy()
-        # mask = mask.numpy()
-        #
-        # outfile = f'imputation{i}.npy'
-        # new_out = os.path.join(ckpt_path, outfile)
-        # np.save(new_out, generated_audio)
-        #
-        # outfile = f'original{i}.npy'
-        # new_out = os.path.join(ckpt_path, outfile)
-        # np.save(new_out, batch)
-        #
-        # outfile = f'mask{i}.npy'
-        # new_out = os.path.join(ckpt_path, outfile)
-        # np.save(new_out, mask)
-        #
-        # print('saved generated samples at iteration %s' % ckpt_iter)
         generated_audio_median = np.median(generated_audio, axis=0)
         target_mask = observed_masks - mask.numpy()
         if np.sum(target_mask)!= 0:
             mse = mean_squared_error(generated_audio_median[target_mask.astype(bool)], batch[target_mask.astype(bool)])
-            mse /= np.sum(target_mask)
             all_mse.append(mse)
         pbar.update(1)
 
@@ -178,10 +138,10 @@ if __name__ == "__main__":
     parser.add_argument('-n', '--num_samples', type=int, default=10,
                         help='Number of utterances to be generated')
     parser.add_argument('--ignore_warning', type=str, default=True)
-    parser.add_argument('--cuda', type=int, default=1)
-    parser.add_argument('--algo', type=str, default='S5')
-    parser.add_argument('--stock', type=str, default='DJ')
-    parser.add_argument('--batch_size', type=int, default=128)
+    parser.add_argument('--cuda', type=int, default=0)
+    parser.add_argument('--algo', type=str, default='S4')
+    parser.add_argument('--stock', type=str, default='all')
+    parser.add_argument('--batch_size', type=int, default=4)
     args = parser.parse_args()
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda)

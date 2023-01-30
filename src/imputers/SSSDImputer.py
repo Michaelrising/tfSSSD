@@ -6,6 +6,8 @@ from utils.util import calc_diffusion_step_embedding
 from imputers.S4Model import S4Layer
 from imputers.S5Model import S5Layer
 from imputers.MegaModel import Mega, MegaLayer
+import numpy as np
+from einops import rearrange
 
 def swish(x):
     return x * keras.activations.sigmoid(x)
@@ -82,8 +84,8 @@ class Residual_block(keras.Model):
             self.SSM1 = S5Layer(ssm_size=s4_d_state, features=2 * self.res_channels) # ssm_size has Order(H)
             self.SSM2 = S5Layer(ssm_size=s4_d_state, features=2 * self.res_channels)
         elif alg == 'Mega':
-            self.SSM1 = MegaLayer(features=2 * self.res_channels, chunk_size=-1)
-            self.SSM2 = MegaLayer(features=2 * self.res_channels, chunk_size=-1)
+            self.SSM1 = MegaLayer(features=2 * self.res_channels, chunk_size=10)
+            self.SSM2 = MegaLayer(features=2 * self.res_channels, chunk_size=10)
 
         self.conv_layer = Conv(self.res_channels, 2 * self.res_channels, kernel_size=3)
 
@@ -181,7 +183,7 @@ class Residual_group(keras.Model):
 
 
 class SSSDImputer(keras.Model):
-    def __init__(self,
+    def __init__(self,T, beta_0, beta_T,
                  in_channels,
                  res_channels,
                  skip_channels,
@@ -197,6 +199,26 @@ class SSSDImputer(keras.Model):
                  s4_layernorm,
                  alg):
         super(SSSDImputer, self).__init__()
+
+        # define diffusion hyper-parameters
+        self.T = T
+        self.beta_0 = beta_0
+        self.beta_T = beta_T
+
+        Beta = np.linspace(beta_0, beta_T, T)  # Linear schedule
+        Alpha = 1 - Beta
+        # Alpha_bar, Beta_tilde = tf.py_function(alpha_beta_bar_assign, inp=[Alpha, Beta, T], Tout=Alpha.dtype)
+        Alpha_bar = Alpha + 0
+        Beta_tilde = Beta + 0
+        for t in range(1, T):
+            Alpha_bar[t] *= Alpha_bar[t - 1]  # \bar{\alpha}_t = \prod_{s=1}^t \alpha_s
+            Beta_tilde[t] *= (1 - Alpha_bar[t - 1]) / (
+                    1 - Alpha_bar[t])  # \tilde{\beta}_t = \beta_t * (1-\bar{\alpha}_{t-1})
+            # / (1-\bar{\alpha}_t)
+        self.Beta = tf.convert_to_tensor(Beta)
+        self.Alpha = tf.convert_to_tensor(Alpha)
+        self.Alpha_bar = tf.convert_to_tensor(Alpha_bar)
+
 
         self.init_conv = keras.Sequential()  # initial process for input
         self.init_conv.add(keras.layers.Input(shape=(in_channels, None,)))
@@ -226,14 +248,57 @@ class SSSDImputer(keras.Model):
 
     @tf.function
     def call(self, input_data, training=True):
-        noise, conditional, mask, diffusion_steps = input_data
+
+        noise, conditional, mask = input_data
+
+        B, C, L = conditional.shape
+        # noise = rearrange(noise, 'b l c -> b c l')
+        # conditional = rearrange(conditional, 'b l c -> b c l')
+        # mask = rearrange(mask, 'b l c -> b c l')
+
+        diffusion_steps = tf.random.uniform(shape=(tf.shape(conditional)[0],), maxval=self.T, dtype=tf.int32)  # randomly sample diffusion steps from 1~T
+
+        transformed_X = tf.cast(tf.math.sqrt(tf.reshape(tf.gather(self.Alpha_bar, diffusion_steps), shape=[tf.shape(conditional)[0], 1, 1])),
+                                dtype=conditional.dtype) * conditional + tf.cast(tf.math.sqrt(
+            1 - tf.reshape(tf.gather(self.Alpha_bar, diffusion_steps), shape=[tf.shape(conditional)[0], 1, 1])),
+            dtype=noise.dtype) * noise  # compute x_t from q(x_t|x_0)
+        diffusion_steps = tf.reshape(diffusion_steps, shape=(tf.shape(conditional)[0], 1))
 
         conditional = conditional * mask
         conditional = tf.concat([conditional, mask], axis=1)
 
-        x = noise
+        x = transformed_X
         x = self.init_conv(x)
         x = self.residual_layer((x, conditional, diffusion_steps))
         y = self.final_conv(x)
 
         return y
+
+    def compute_loss(self, x=None, y=None, y_pred=None, sample_weight=None):
+
+        return self.compiled_loss(y[sample_weight], y_pred[sample_weight])
+
+    # def compute_metrics(self, x=None, y=None, y_pred=None, sample_weight=None):
+    #     return self.compiled_metrics(y[sample_weight], y_pred[sample_weight])
+
+    def train_step(self, data):
+        x, y = data
+        noise, conditional, mask, loss_mask = x
+        x = (noise, conditional, mask)
+        # Run forward pass.
+        with tf.GradientTape() as tape:
+            y_pred = self(x, training=True)
+            loss = self.compute_loss(x, y, y_pred, loss_mask)
+        self._validate_target_and_loss(y, loss)
+        # Run backwards pass.
+        self.optimizer.minimize(loss, self.trainable_variables, tape=tape)
+        return self.compute_metrics(x, y[loss_mask], y_pred[loss_mask], sample_weight=None)
+
+    def test_step(self, data):
+        x, y = data
+        noise, conditional, mask, loss_mask = x
+        x = (noise, conditional, mask)
+        y_pred = self(x, training=True)
+        self.compute_loss(x, y, y_pred, loss_mask)
+        return self.compute_metrics(x, y[loss_mask], y_pred[loss_mask], sample_weight=None)
+
