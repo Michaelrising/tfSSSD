@@ -5,13 +5,13 @@ import yfinance as yf
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 
-start = datetime.datetime(2018, 1, 2)
+start = datetime.datetime(2013, 1, 2)
 end = datetime.datetime(2023, 1, 1)
 start_time = str(start.date())
 end_time = str(end.date())
 
 weekmasks = "Mon Tue Wed Thu Fri"
-all_dates = pd.bdate_range(start=datetime.datetime(2018, 1, 1), end=datetime.datetime(2023, 1, 1), name='Date', freq='C', weekmask=weekmasks, holidays=[])
+all_dates = pd.bdate_range(start=datetime.datetime(2013, 1, 1), end=datetime.datetime(2023, 1, 1), name='Date', freq='C', weekmask=weekmasks, holidays=[])
 # all_dates = all_dates.dt.dayofweek
 url0 = 'https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average'
 tb0 = pd.read_html(url0)[1]
@@ -37,13 +37,15 @@ SP350 = tb4['Ticker']
 US = pd.unique(pd.concat((DJ, SP500)))
 HK = pd.unique(pd.concat((SE, HSCI)))
 EU = pd.unique(pd.concat((ES, SP350)))
-stocks_dic = {'US': US, "HK":HK, 'EU': EU} #
+stocks_dic = {'US': US, 'EU': EU, "HK":HK ,'DJ': DJ, 'ES': ES, 'SE': SE} #
 
+ALL_STOCKS = []
 for i, index in enumerate(list(stocks_dic.keys())):
     stocks_list = stocks_dic.get(index)
     if not os.path.exists('../datasets/Stocks/' + index):
         os.makedirs('../datasets/Stocks/' + index)
     new_stock_list = []
+    all_scaled_stocks = []
     all_stocks = []
     for ticker in stocks_list:
         file_name = '../datasets/Stocks/' + index + '/' + ticker + '_' + start_time + '_to_' + end_time + '.csv'
@@ -55,25 +57,26 @@ for i, index in enumerate(list(stocks_dic.keys())):
         if not data.empty:
             if data.iloc[0].name > start:
                 print(data.iloc[0].name)
-                print("The history of stock {} less than 5 years, IGNORE it!".format(ticker))
+                print("The history of stock {} less than 10 years, IGNORE it!".format(ticker))
                 # stocks_list = stocks_list.drop(labels=i)
             else:
                 index0 = all_dates.isin(data.index)
-                data_w_na = pd.DataFrame(index = all_dates, columns=["Open", 'High', 'Low', 'Close', 'Adj Close', 'Volume'])
-                data_w_na.iloc[index0] = data.copy(deep=True)
+                data_w_na = pd.DataFrame(index = all_dates, columns=["Open", 'High', 'Low', 'Close', 'Adj Close'])
+                data_w_na.iloc[index0] = data[["Open", 'High', 'Low', 'Close', 'Adj Close']].copy(deep=True)
                 data_w_na.to_csv(file_name)
                 scalar0 = MinMaxScaler()
                 scalar1 = MinMaxScaler()
                 price = scalar0.fit_transform(data[["Open", 'High', 'Low', 'Close', 'Adj Close']])
-                volume = scalar1.fit_transform(data['Volume'].to_numpy().reshape(-1,1))
-                scaled_data = np.concatenate((price, volume), axis=1)
+                # volume = scalar1.fit_transform(data['Volume'].to_numpy().reshape(-1,1))
+                # scaled_data = np.concatenate((price, volume), axis=1)
                 scaled_data_w_na = pd.DataFrame(index=all_dates,
-                                         columns=["Open", 'High', 'Low', 'Close', 'Adj Close', 'Volume'])
-                scaled_data_w_na.iloc[index0] = scaled_data.copy()
+                                         columns=["Open", 'High', 'Low', 'Close', 'Adj Close'])
+                scaled_data_w_na.iloc[index0] = price.copy()
                 scaled_data_w_na.to_csv(scaled_file_name)
                 print(data_w_na.shape)
                 new_stock_list.append(ticker)
-                all_stocks.append(scaled_data_w_na.to_numpy())
+                all_scaled_stocks.append(scaled_data_w_na.to_numpy())
+                all_stocks.append(data_w_na.to_numpy())
 
     # for (i, ticker) in enumerate(new_stock_list):
     #     file_name = '../datasets/Stocks/' + index + '/scaled_' + ticker + '_' + start_time + '_to_' + end_time + '.csv'
@@ -86,9 +89,17 @@ for i, index in enumerate(list(stocks_dic.keys())):
     all_stocks_3dim = np.stack(all_stocks, axis=0) # Num_stocks * Time_length * Features
     all_stocks_3dim = all_stocks_3dim.transpose([1, 0, 2])
     print(all_stocks_3dim.shape)
-    all_stocks_file_name = '../datasets/Stocks/scaled_' + index +'_all_stocks_' + start_time + '_to_' + end_time + '.npy'
+    all_stocks_file_name = '../datasets/Stocks/' + index +'_all_stocks_' + start_time + '_to_' + end_time + '.npy'
     np.save(all_stocks_file_name, all_stocks_3dim)
+    scaled_all_stocks_3dim = np.stack(all_scaled_stocks, axis=0)  # Num_stocks * Time_length * Features
+    scaled_all_stocks_3dim = scaled_all_stocks_3dim.transpose([1, 0, 2])
+    print(scaled_all_stocks_3dim.shape)
+    scaled_all_stocks_filename = '../datasets/Stocks/scaled_' + index + '_all_stocks_' + start_time + '_to_' + end_time + '.npy'
+    np.save(scaled_all_stocks_filename, scaled_all_stocks_3dim)
+    ALL_STOCKS.append(scaled_all_stocks_3dim)
 
-
+ALL_STOCKS = np.concatenate(ALL_STOCKS[:3], axis=0) # N L K
+file_name = '../datasets/Stocks/scaled_all_stocks_' + start_time + '_to_' + end_time + '.npy'
+np.save(file_name, ALL_STOCKS)
 
 

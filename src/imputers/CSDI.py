@@ -145,7 +145,7 @@ class tfCSDI(keras.Model):
     #                                 tf.TensorSpec([None, 6, 29], tf.float32)), )])
     @tf.function
     def train_step(self, batch):
-        observed_data, observed_mask, _, cond_mask = batch[0]
+        observed_data, observed_mask, cond_mask = batch[0]
         # observation mask denotes the original data missing, gt_masks is manmade mask
         B, K, L = cond_mask.shape
         observed_tp = tf.reshape(tf.range(L), [1, L])
@@ -170,7 +170,7 @@ class tfCSDI(keras.Model):
     #                                 tf.TensorSpec([None, 6, 29], tf.float32)), )])
     @tf.function
     def test_step(self, batch):
-        observed_data, observed_mask, _, cond_mask = batch[0]
+        observed_data, observed_mask, cond_mask = batch[0]
         # observation mask denotes the original data missing, gt_masks is man-made mask
         B, K, L = observed_data.shape
         observed_tp = tf.reshape(tf.range(L), [1, L])  # 1 L

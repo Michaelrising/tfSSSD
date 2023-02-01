@@ -123,12 +123,14 @@ def generate(output_directory,
         if np.sum(target_mask)!= 0:
             mse = mean_squared_error(generated_audio_median[target_mask.astype(bool)], batch[target_mask.astype(bool)])
             all_mse.append(mse)
+            print('Current batch {} MSE is {}'.format(i, mse))
         pbar.update(1)
+        np.save(output_directory+'/imputed_batch_'+str(i)+'_data.npy', generated_audio)
 
     print('Total MSE:', mean(all_mse))
     imputed_data = np.concatenate(all_generated_samples, axis=1) # num_samples x 2609 x L x C
     # num_samples B  length feature
-    np.save(output_directory + '/imputed_data.npy', imputed_data)
+    np.save(output_directory + '/imputed_all_data.npy', imputed_data)
 
 
 if __name__ == "__main__":
@@ -141,7 +143,7 @@ if __name__ == "__main__":
     parser.add_argument('--cuda', type=int, default=0)
     parser.add_argument('--algo', type=str, default='S4')
     parser.add_argument('--stock', type=str, default='all')
-    parser.add_argument('--batch_size', type=int, default=4)
+    parser.add_argument('--batch_size', type=int, default=64)
     args = parser.parse_args()
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda)

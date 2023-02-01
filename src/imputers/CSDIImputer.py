@@ -15,7 +15,7 @@ class CSDIImputer:
               missing_ratio_or_k=0.1,
               epochs=50,
               batch_size=64,
-              lr=5.0e-4,
+              lr=1.0e-3,
               layers=4,
               channels=64,
               nheads=8,
@@ -211,20 +211,20 @@ class CSDIImputer:
 
         # define callback
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=self.log_path, histogram_freq=1)
-        earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=10)
+        earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=10)
         # earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=10)
         best_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
             filepath=self.model_path,
-            save_weights_only=False,
+            save_weights_only=True,
             monitor='loss',
             mode='min',
             save_best_only=True,
-            save_format='tf'
+            # save_format='tf'
         )
         # prepare data set
         train_data = TrainDataset(series, missing_ratio_or_k=self.missing_ratio_or_k,
                                   masking=masking, batch_size=self.batch_size)  # observed_values_tensor, observed_masks_tensor, gt_mask_tensor
-        train_data = self.process_data(train_data) # observed_data, observed_mask, gt_mask, cond_mask
+        train_data = self.process_data(train_data) # observed_data, observed_mask,cond_mask
         if validation_series is not None:
             validation_data = TrainDataset(validation_series, missing_ratio_or_k=self.missing_ratio_or_k,
                                   masking=masking)
@@ -283,16 +283,16 @@ class CSDIImputer:
 
         observed_data = tf.transpose(observed_data, perm=[0, 2, 1])
         observed_mask = tf.transpose(observed_mask, perm=[0, 2, 1])
-        gt_mask = tf.transpose(gt_mask, [0, 2, 1])
 
-        # cut_length = tf.zeros(observed_data.shape[0], dtype=tf.int64)
+        cut_length = tf.zeros(observed_data.shape[0], dtype=tf.int64)
         for_pattern_mask = observed_mask
-        if self.config["model"]["target_strategy"] != "random":
+        if self.config["model"]["target_strategy"] == "mix":
             cond_mask = self.get_hist_mask(observed_mask, for_pattern_mask=for_pattern_mask)
-        else:
+        elif self.config["model"]["target_strategy"] == "random":
             cond_mask = self.get_randmask(observed_mask)
-
-        return observed_data, observed_mask, gt_mask, cond_mask
+        elif self.config["model"]["target_strategy"] == "holiday":
+            cond_mask = tf.transpose(gt_mask, [0, 2, 1])
+        return observed_data, observed_mask, cond_mask
 
     def get_randmask(self, observed_mask):
         rand_for_mask = np.random.uniform(size=observed_mask.shape) * observed_mask.numpy()

@@ -36,12 +36,16 @@
 #nohup python3 -u train-sssd.py --cuda 1 --alg "S5" --stock 'SE'  > ../log/stocks/SE/train_sssd_se_s5.log  2>&1 & DONE
 
 
-nohup python3 -u train-sssd.py --cuda 0 --alg "S4" --stock 'all' --batch_size 2 > ../log/stocks/all/train_sssd_all_s4.log  2>&1 &
+nohup python3 -u train-sssd.py --cuda 0 --alg "S4" --stock 'all' --batch_size 16 --seq_len 200 > ../log/stocks/all/train_sssd_all_s4_seq_200.log  2>&1 &
+nohup python3 -u train-sssd.py --cuda 1 --alg "S4" --stock 'all' --batch_size 8 --seq_len 500 > ../log/stocks/all/train_sssd_all_s4_seq_500.log  2>&1 &
 nohup python3 -u train-sssd.py --cuda 0 --alg "S5" --stock 'all' --batch_size 15 > ../log/stocks/all/train_sssd_all_s5.log  2>&1 &
-nohup python3 -u train-sssd.py --cuda 1 --alg "Mega" --stock 'all' --batch_size 3 > ../log/stocks/all/train_sssd_all_mega.log  2>&1 &
+nohup python3 -u train-sssd.py --cuda 1 --alg "Mega" --stock 'all' --batch_size 2 > ../log/stocks/all/train_sssd_all_mega.log  2>&1 &
 
 
 ########################################################################################################################
+nohup python3 -u evaluate_sssd.py --algo 'S4' --cuda 0 --stock 'all' > ../log/stocks/all/evaluate_sssd_all_s4.log  2>&1 &
+
+
 
 
 #nohup python3 -u evaluate_sssd.py --algo 'S4' --cuda 0 --stock 'DJ' > ../log/stocks/DJ/evaluate_sssd_dj_s4.log  2>&1 & # DONE
@@ -89,4 +93,5 @@ nohup python3 -u evaluate_csdi.py --algo 'Mega' --cuda 0 --stock 'ES' > ../log/s
 nohup python3 -u evaluate_csdi.py --algo 'S5' --cuda 1 --stock 'ES' > ../log/stocks/evaluate_csdi_dj_s5.log  2>&1 &
 
 
+nohup python3 -u predict.py > ../log/prediction_task/predict_hk_stocks.log  2>&1 &
 

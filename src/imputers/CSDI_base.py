@@ -132,34 +132,19 @@ def TrainDataset(series, missing_ratio_or_k=0.0, masking='rm', batch_size=None):
     observed_masks_list = []
     gt_masks_list = []
     if masking == 'holiday':
+        gt_masks = []
         series = series.numpy()
+        for s in series:
+            observed_masks = ~np.isnan(s)  # NA: 0 ;has data: 1
+            holidays = np.unique(np.where(~observed_masks)[0])
+            missing_ratio = len(holidays) / L
+            gt_days = np.random.choice(np.unique(np.where(observed_masks)[0]), size=int(missing_ratio * L),
+                                       replace=False)
+            gt_mask = observed_masks
+            gt_mask[gt_days] = np.zeros_like(s[0], dtype=bool)
+            gt_masks.append(gt_mask)
+        gt_masks = np.array(gt_masks)
         observed_masks = ~np.isnan(series)
-        holidays = np.unique(np.where(~observed_masks)[0])
-        gt_days = []
-        for day in holidays:
-            gt_days.append(day)
-            # if day == 1:
-            #     gt_days.append(day+1)
-            # elif day == series.shape[0] - 1:
-            #     gt_days.append(day - 1)
-            # else:
-            #     gt_days.append(day - 1)
-            #     gt_days.append(day + 1)
-        # for batch that there is no holiday, we add one day as a random holiday
-        batch_splits = np.arange(0, B, batch_size)
-        gt_days = np.unique(np.array(gt_days))
-        gt_batch_inds = np.unique(np.digitize(gt_days, batch_splits)) - 1
-        mask = ~np.isin(np.arange(0,batch_splits.shape[0]), gt_batch_inds)
-        not_gt_batch_inds = np.arange(0, batch_splits.shape[0])[mask]
-        for ind in not_gt_batch_inds:
-            random_day = np.random.choice(np.arange(batch_splits[ind], batch_splits[ind+1]), size=int(np.ceil(batch_size/16)), replace=False)
-            gt_days = np.append(gt_days, random_day)
-        for ind in gt_batch_inds[:-1]:
-            random_day = np.random.choice(np.arange(batch_splits[ind], batch_splits[ind + 1]))
-            gt_days = np.append(gt_days, random_day)
-        gt_days = np.unique(gt_days)
-        gt_masks = observed_masks
-        gt_masks[gt_days] = np.zeros_like(observed_masks[0], dtype=bool)
         series = np.nan_to_num(series)
         observed_values_tensor = tf.convert_to_tensor(series.astype('float32'))
         observed_masks_tensor = tf.convert_to_tensor(observed_masks.astype('float32'))

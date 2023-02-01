@@ -1,13 +1,16 @@
 {   
     "diffusion_config":{
-        "T": 200,
+        "T": 100,
         "beta_0": 0.0001,
         "beta_T": 0.02
     },
     "wavenet_config": {
+                "T": 100,
+        "beta_0": 0.0001,
+        "beta_T": 0.02,
         "in_channels": 14, 
         "out_channels":14,
-        "num_res_layers": 36,
+        "num_res_layers": 20,
         "res_channels": 256, 
         "skip_channels": 256,
         "diffusion_step_embed_dim_in": 128,
@@ -18,7 +21,8 @@
         "s4_dropout":0.0,
         "s4_bidirectional":1,
         "s4_layernorm":1,
-        "alg": "S4"
+        "alg": "S4",
+        "only_generate_missing": 1
     },
     "train_config": {
         "output_directory": "../results/mujoco/SSSDS4",
@@ -27,7 +31,7 @@
         "iters_per_ckpt": 200,
         "iters_per_logging": 20,
         "n_iters": 150000,
-        "learning_rate": 2e-4,
+        "learning_rate": 1e-3,
         "only_generate_missing": 1,
         "use_model": 2,
         "masking": "rm",

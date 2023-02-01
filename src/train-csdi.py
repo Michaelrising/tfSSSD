@@ -1,18 +1,22 @@
+import numpy as np
+
 from imputers.CSDIImputer import *
 import argparse
 from datetime import datetime
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--algo', type=str, default='transformer', help='The Algorithm for imputation: transformer or S4')
+    parser.add_argument('--algo', type=str, default='S4', help='The Algorithm for imputation: transformer or S4')
     parser.add_argument('--data', type=str, default='stocks', help='The data set for training')
-    parser.add_argument('--stock', type=str, default='DJ', help='The data set for training: DJ SE ES')
+    parser.add_argument('--stock', type=str, default='all', help='The data set for training: DJ SE ES')
     parser.add_argument('--cuda', type=int, default=1, help='The CUDA device for training')
     parser.add_argument('--epochs', type=int, default=100, help='The number of epochs for training')
     parser.add_argument('--batch_size', type=int, default=32, help='The number of batch size')
     parser.add_argument('--masking', type=str, default='holiday', help='The masking strategy')
     parser.add_argument('--target_strategy', type=str, default='holiday', help='The target strategy')
     parser.add_argument('--amsgrad', type=bool, default=False, help='The optimizer whether uses AMSGrad')
+    parser.add_argument('--seq_len', type=int, default=100)
+    parser.add_argument('--mw', default=5, type=int)
     args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda)
     os.environ['TF_GPU_ALLOCATOR']='cuda_malloc_async'
@@ -28,8 +32,8 @@ if __name__ == "__main__":
             # Memory growth must be set before GPUs have been initialized
             print(e)
     current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-    model_path = '../results/' + args.data + '/' + args.stock +'/CSDI-' + args.algo + '/' + current_time + '/csdi_model'
-    log_path = '../log/' + args.data + '/' + args.stock + '/CSDI-' + args.algo + '/' + current_time + '/csdi_log'
+    model_path = '../results/' + args.data + '/' + args.stock +'/CSDI-' + args.algo + '/' + current_time + '_seq_{}'.format(args.seq_len)
+    log_path = '../log/' + args.data + '/' + args.stock + '/CSDI-' + args.algo + '/' + current_time + '_seq_'.format(args.seq_len)
     config_path = './config'
     if not os.path.exists(model_path):
         os.makedirs(model_path)
@@ -40,13 +44,37 @@ if __name__ == "__main__":
     if args.data == 'mujoco':
         all_data = np.load('../datasets/Mujoco/train_mujoco.npy')
         all_data = np.array(all_data)
-        training_data = tf.convert_to_tensor(all_data[:7680])
+        training_data = tf.convert_to_tensor(all_data[:7680]) # B L K
         # validation_data = tf.convert_to_tensor(all_data[6400:7680])
         predicton_data = tf.convert_to_tensor(all_data[7680:])
     if args.data == 'stocks':
-    # Stock data
-        all_data = np.load('../datasets/Stocks/scaled_' + args.stock +'_all_stocks_2013-01-02_to_2023-01-01.npy') # Time_length * num_stocks * feature [B L K]
-        training_data = tf.convert_to_tensor(all_data)
+        # Stock data
+        if args.stock == 'all':
+            # prepare X and Y for model.fit()
+            train_data = []
+            for ticker in ['US', 'HK', 'EU']:
+                data_name = 'scaled_' + ticker + '_all_stocks_2013-01-02_to_2023-01-01.npy'
+                ticker_data = np.load('../datasets/Stocks/' + data_name, allow_pickle=True)
+                for i in range(ticker_data.shape[0] // args.seq_len):
+                    train_data.append(ticker_data[args.seq_len * i:args.seq_len * (i + 1)])
+            train_data = np.concatenate(train_data, axis=1).astype(float) # L B K
+            train_data = train_data.transpose([1,0,2]) # B L K
+            np.random.shuffle(train_data)
+
+            print('Loading stocks data: ' + args.stock)
+            print(train_data.shape) # L B K
+        elif args.stock == 'single':
+            train_data = []
+            data_name = 'scaled_DJ_all_stocks_2013-01-02_to_2023-01-01.npy'
+            ticker_data = np.load('../datasets/Stocks/' + data_name, allow_pickle=True) #.transpose([1, 0, 2])
+            ticker_data = ticker_data[:, 0]# L * K
+            for i in range(0, ticker_data.shape[0]-args.seq_len, args.mw):
+                train_data.append(ticker_data[i:args.seq_len + i]) # Seq_len * 6
+            train_data = np.stack(train_data).astype(float) # B L K
+            # train_data = train_data.transpose([1,0,2])
+        else:
+            train_data = np.load('../datasets/Stocks/scaled_' + args.stock +'_all_stocks_2013-01-02_to_2023-01-01.npy') # Time_length * num_stocks * feature [B L K]
+        training_data = tf.convert_to_tensor(train_data)
         # validation_data = tf.convert_to_tensor(all_data[int(0.8*all_data.shape[0]):])
     print('Data loaded')
     CSDIImputer = CSDIImputer(model_path,

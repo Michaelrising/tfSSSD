@@ -333,30 +333,36 @@ def get_mask_bm(sample, k):
 
 
 def get_mask_holiday(sample):
-    L, C, N = sample.shape
-    observed_masks = ~np.isnan(sample)  # NA: 0 ;has data: 1
-    holidays = np.unique(np.where(~observed_masks)[0])
-    missing_ratio = len(holidays)/L
-    gt_days = np.random.choice(np.unique(np.where(observed_masks)[0]), size=int(missing_ratio*L), replace=False)
-    # B, C, L = sample.shape
-    # observed_masks = ~np.isnan(sample) # NA: 0 ;has data: 1
-    # holidays = np.unique(np.where(~observed_masks)[0])
-    # gt_days = holidays
-    # # for batch that there is no holiday, we add one day as a random holiday
-    # batch_splits = np.arange(0, B, batch_size)
-    # gt_batch_inds = np.unique(np.digitize(gt_days, batch_splits)) - 1
-    # mask = ~np.isin(np.arange(0, batch_splits.shape[0]), gt_batch_inds)
-    # not_gt_batch_inds = np.arange(0, batch_splits.shape[0])[mask]
-    # for ind in not_gt_batch_inds:
-    #     if ind < batch_splits.shape[0]-1:
-    #         random_day = np.random.choice(np.arange(batch_splits[ind], batch_splits[ind + 1]),
-    #                                       size=int(np.ceil(batch_size / 16)), replace=False)
-    #         gt_days = np.append(gt_days, random_day)
-    # for ind in gt_batch_inds:
-    #     if ind < batch_splits.shape[0] - 1:
-    #         random_day = np.random.choice(np.arange(batch_splits[ind], batch_splits[ind + 1]))
-    #         gt_days = np.append(gt_days, random_day)
-    gt_masks = observed_masks
-    gt_masks[gt_days] = np.zeros_like(observed_masks[0], dtype=bool)
-    return tf.cast(tf.convert_to_tensor(gt_masks), tf.float32)
+    L, N, C = sample.shape
+    sample = sample.transpose([1, 0, 2])
+    gt_masks = []
+    for s in sample:
+        observed_masks = ~np.isnan(s)  # NA: 0 ;has data: 1
+        holidays = np.unique(np.where(~observed_masks)[0])
+        missing_ratio = len(holidays)/L
+        gt_days = np.random.choice(np.unique(np.where(observed_masks)[0]), size=int(missing_ratio*L), replace=False)
+        # B, C, L = sample.shape
+        # observed_masks = ~np.isnan(sample) # NA: 0 ;has data: 1
+        # holidays = np.unique(np.where(~observed_masks)[0])
+        # gt_days = holidays
+        # # for batch that there is no holiday, we add one day as a random holiday
+        # batch_splits = np.arange(0, B, batch_size)
+        # gt_batch_inds = np.unique(np.digitize(gt_days, batch_splits)) - 1
+        # mask = ~np.isin(np.arange(0, batch_splits.shape[0]), gt_batch_inds)
+        # not_gt_batch_inds = np.arange(0, batch_splits.shape[0])[mask]
+        # for ind in not_gt_batch_inds:
+        #     if ind < batch_splits.shape[0]-1:
+        #         random_day = np.random.choice(np.arange(batch_splits[ind], batch_splits[ind + 1]),
+        #                                       size=int(np.ceil(batch_size / 16)), replace=False)
+        #         gt_days = np.append(gt_days, random_day)
+        # for ind in gt_batch_inds:
+        #     if ind < batch_splits.shape[0] - 1:
+        #         random_day = np.random.choice(np.arange(batch_splits[ind], batch_splits[ind + 1]))
+        #         gt_days = np.append(gt_days, random_day)
+        gt_mask = observed_masks
+        gt_mask[gt_days] = np.zeros_like(s[0], dtype=bool)
+        gt_masks.append(gt_mask)
+    gt_masks = np.array(gt_masks)
+
+    return tf.cast(tf.convert_to_tensor(gt_masks), tf.float32) # N L C
 

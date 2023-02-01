@@ -84,8 +84,8 @@ class Residual_block(keras.Model):
             self.SSM1 = S5Layer(ssm_size=s4_d_state, features=2 * self.res_channels) # ssm_size has Order(H)
             self.SSM2 = S5Layer(ssm_size=s4_d_state, features=2 * self.res_channels)
         elif alg == 'Mega':
-            self.SSM1 = MegaLayer(features=2 * self.res_channels, chunk_size=10)
-            self.SSM2 = MegaLayer(features=2 * self.res_channels, chunk_size=10)
+            self.SSM1 = MegaLayer(features=2 * self.res_channels, chunk_size=20)
+            self.SSM2 = MegaLayer(features=2 * self.res_channels, chunk_size=20)
 
         self.conv_layer = Conv(self.res_channels, 2 * self.res_channels, kernel_size=3)
 
@@ -197,13 +197,16 @@ class SSSDImputer(keras.Model):
                  s4_dropout,
                  s4_bidirectional,
                  s4_layernorm,
-                 alg):
+                 alg,
+                 only_generate_missing):
         super(SSSDImputer, self).__init__()
 
         # define diffusion hyper-parameters
         self.T = T
         self.beta_0 = beta_0
         self.beta_T = beta_T
+
+        self.only_generate_missing = only_generate_missing
 
         Beta = np.linspace(beta_0, beta_T, T)  # Linear schedule
         Alpha = 1 - Beta
@@ -252,22 +255,21 @@ class SSSDImputer(keras.Model):
         noise, conditional, mask = input_data
 
         B, C, L = conditional.shape
-        # noise = rearrange(noise, 'b l c -> b c l')
-        # conditional = rearrange(conditional, 'b l c -> b c l')
-        # mask = rearrange(mask, 'b l c -> b c l')
 
         diffusion_steps = tf.random.uniform(shape=(tf.shape(conditional)[0],), maxval=self.T, dtype=tf.int32)  # randomly sample diffusion steps from 1~T
-
-        transformed_X = tf.cast(tf.math.sqrt(tf.reshape(tf.gather(self.Alpha_bar, diffusion_steps), shape=[tf.shape(conditional)[0], 1, 1])),
-                                dtype=conditional.dtype) * conditional + tf.cast(tf.math.sqrt(
-            1 - tf.reshape(tf.gather(self.Alpha_bar, diffusion_steps), shape=[tf.shape(conditional)[0], 1, 1])),
-            dtype=noise.dtype) * noise  # compute x_t from q(x_t|x_0)
+        if training:
+            noise = tf.cast(tf.math.sqrt(tf.reshape(tf.gather(self.Alpha_bar, diffusion_steps), shape=[tf.shape(conditional)[0], 1, 1])),
+                                    dtype=conditional.dtype) * conditional + tf.cast(tf.math.sqrt(
+                1 - tf.reshape(tf.gather(self.Alpha_bar, diffusion_steps), shape=[tf.shape(conditional)[0], 1, 1])),
+                dtype=noise.dtype) * noise  # compute x_t from q(x_t|x_0)
+        else:
+            noise = noise
         diffusion_steps = tf.reshape(diffusion_steps, shape=(tf.shape(conditional)[0], 1))
 
         conditional = conditional * mask
         conditional = tf.concat([conditional, mask], axis=1)
 
-        x = transformed_X
+        x = noise
         x = self.init_conv(x)
         x = self.residual_layer((x, conditional, diffusion_steps))
         y = self.final_conv(x)
@@ -282,23 +284,33 @@ class SSSDImputer(keras.Model):
     #     return self.compiled_metrics(y[sample_weight], y_pred[sample_weight])
 
     def train_step(self, data):
-        x, y = data
-        noise, conditional, mask, loss_mask = x
+        x = data
+        conditional, mask, loss_mask = x[0]
+        noise = tf.random.normal(shape=tf.shape(conditional), dtype=conditional.dtype)
+        if self.only_generate_missing:
+            noise = conditional * mask + noise * (1. - mask)
+        else:
+            noise = conditional * loss_mask + noise * (1. - loss_mask)
         x = (noise, conditional, mask)
         # Run forward pass.
         with tf.GradientTape() as tape:
             y_pred = self(x, training=True)
-            loss = self.compute_loss(x, y, y_pred, loss_mask)
-        self._validate_target_and_loss(y, loss)
+            loss = self.compute_loss(x, noise, y_pred, loss_mask)
+        self._validate_target_and_loss(noise, loss)
         # Run backwards pass.
         self.optimizer.minimize(loss, self.trainable_variables, tape=tape)
-        return self.compute_metrics(x, y[loss_mask], y_pred[loss_mask], sample_weight=None)
+        return self.compute_metrics(x, noise[loss_mask], y_pred[loss_mask], sample_weight=None)
 
     def test_step(self, data):
-        x, y = data
-        noise, conditional, mask, loss_mask = x
+        x= data[0]
+        conditional, mask, loss_mask = x
+        noise = tf.random.normal(shape=tf.shape(conditional), dtype=conditional.dtype)
+        if self.only_generate_missing:
+            noise = conditional * mask + noise * (1. - mask)
+        else:
+            noise = conditional * loss_mask + noise * (1. - loss_mask)
         x = (noise, conditional, mask)
         y_pred = self(x, training=True)
-        self.compute_loss(x, y, y_pred, loss_mask)
-        return self.compute_metrics(x, y[loss_mask], y_pred[loss_mask], sample_weight=None)
+        self.compute_loss(x, noise, y_pred, loss_mask)
+        return self.compute_metrics(x, noise[loss_mask], y_pred[loss_mask], sample_weight=None)
 

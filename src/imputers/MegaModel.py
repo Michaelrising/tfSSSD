@@ -352,9 +352,10 @@ def FeedForward(dim, ff_mult):
 class Mega(keras.Model):
     def __init__(
         self,
-        features, # original name is dim
-        # num_tokens,
+        features, # original name is dim 256
+        mid_feature, # 64
         depth,
+        out_dim=6,
         chunk_size=-1,
         ff_mult = 2,
         pre_norm = False,
@@ -362,11 +363,77 @@ class Mega(keras.Model):
     ):
         super().__init__()
         # self.token_emb = keras.layers.Embedding(num_tokens, dim)
-        self.input_linear = keras.layers.Dense(features)
-        self.output_f = keras.Sequential()
-        self.output_f.add(keras.layers.Conv1D(filters=57, kernel_size=2, data_format='channels_first'))
-        self.output_f.add(keras.layers.LayerNormalization(axis=-1))
-        self.output_f.add(keras.layers.Dense(6, activation=keras.activations.relu))
+        self.input_linear = keras.Sequential([
+            keras.layers.Dense(features),
+            keras.layers.Conv2D(mid_feature, kernel_size=2, kernel_initializer=keras.initializers.HeNormal(), data_format='channels_last'),
+            keras.layers.MaxPooling2D(pool_size=2, strides=2),
+        ])
+        self.mid_linear = keras.layers.Dense(mid_feature)
+        self.output_f = keras.Sequential([
+            keras.layers.Dense(128, activation=keras.activations.relu),
+            keras.layers.Dense(out_dim) # results > 0 so relu is the suitable activation function
+        ])
+
+        self.pre_norm = pre_norm
+
+        self.mega_layers = []
+        for _ in range(depth):
+            self.mega_layers.append([
+                MegaLayer(features = mid_feature, chunk_size=chunk_size, **kwargs),
+                keras.layers.LayerNormalization(axis=-1),
+                FeedForward(dim = mid_feature, ff_mult = ff_mult),
+                keras.layers.LayerNormalization(axis=-1),
+            ])
+
+    @tf.function
+    def call(self, x):
+        # x shape: B L N H
+        pre_norm = self.pre_norm
+        post_norm = not self.pre_norm
+        x = self.input_linear(x)
+        # B L N' H'
+        x = rearrange(x, 'b l n h -> b l (n h)')
+        x = self.mid_linear(x) # B L K
+
+        for mega_layer, mega_norm , ff, ff_norm in self.mega_layers: #
+            mega_maybe_prenorm = mega_norm if pre_norm else identity
+            ff_maybe_prenorm = ff_norm if pre_norm else identity
+
+            mega_maybe_postnorm = mega_norm if post_norm else identity
+            ff_maybe_postnorm = ff_norm if post_norm else identity
+
+            x = mega_layer(mega_maybe_prenorm(x), x) # mega_maybe_prenorm(x)
+
+            x = mega_maybe_postnorm(x)
+
+            x = ff(ff_maybe_prenorm(x)) + x
+
+            x = ff_maybe_postnorm(x)
+            # B L K
+        x = rearrange(x, 'b l k -> b (l k)')
+        return self.output_f(x)
+
+
+class MegaImputer(keras.Model):
+    def __init__(
+        self,
+        features, # original name is dim
+        depth,
+        out_dim=6,
+        chunk_size=-1,
+        ff_mult = 2,
+        pre_norm = True,
+        **kwargs
+    ):
+        super(MegaImputer).__init__()
+        # self.token_emb = keras.layers.Embedding(num_tokens, dim)
+        self.input_linear = keras.Sequential([
+            keras.layers.Dense(features*2),
+            keras.layers.Conv1D(features, kernel_size=2, activation=keras.activations.gelu, kernel_initializer=keras.initializers.HeNormal())
+        ])
+
+        self.cond_conv = keras.layers.Conv1D(features*2, 1, activation=keras.activations.relu, kernel_initializer=keras.initializers.HeNormal())
+
         self.pre_norm = pre_norm
 
         self.mega_layers = []
@@ -381,12 +448,18 @@ class Mega(keras.Model):
     @tf.function
     def call(self, x):
         # x shape: B L H
+        noise, conditional, mask = x
+        conditional = conditional * mask
+        conditional = tf.concat([conditional, mask], axis=1)
+
+        cond = self.cond_conv(conditional)
+
         pre_norm = self.pre_norm
         post_norm = not self.pre_norm
         x = self.input_linear(x)
         # x = self.token_emb(x)
 
-        for mega_layer, mega_norm, ff, ff_norm in self.mega_layers:
+        for mega_layer, mega_norm, ff, ff_norm in self.mega_layers: #
             mega_maybe_prenorm = mega_norm if pre_norm else identity
             ff_maybe_prenorm = ff_norm if pre_norm else identity
 
@@ -401,5 +474,34 @@ class Mega(keras.Model):
 
             x = ff_maybe_postnorm(x)
 
-        return self.output_f(x)
+        return x
+
+    def compute_loss(self, x=None, y=None, y_pred=None, sample_weight=None):
+
+        return self.compiled_loss(y[sample_weight], y_pred[sample_weight])
+
+    # def compute_metrics(self, x=None, y=None, y_pred=None, sample_weight=None):
+    #     return self.compiled_metrics(y[sample_weight], y_pred[sample_weight])
+
+    def train_step(self, data):
+        x, y = data
+        noise, conditional, mask, loss_mask = x
+        x = (noise, conditional, mask)
+        # Run forward pass.
+        with tf.GradientTape() as tape:
+            y_pred = self(x, training=True)
+            loss = self.compute_loss(x, y, y_pred, loss_mask)
+        self._validate_target_and_loss(y, loss)
+        # Run backwards pass.
+        self.optimizer.minimize(loss, self.trainable_variables, tape=tape)
+        return self.compute_metrics(x, y[loss_mask], y_pred[loss_mask], sample_weight=None)
+
+    def test_step(self, data):
+        x, y = data
+        noise, conditional, mask, loss_mask = x
+        x = (noise, conditional, mask)
+        y_pred = self(x, training=True)
+        self.compute_loss(x, y, y_pred, loss_mask)
+        return self.compute_metrics(x, y[loss_mask], y_pred[loss_mask], sample_weight=None)
+
 

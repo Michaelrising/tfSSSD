@@ -11,7 +11,7 @@ from utils.util import get_mask_mnr, get_mask_bm, get_mask_rm, std_normal
 
 # from imputers.DiffWaveImputer import DiffWaveImputer
 # from imputers.SSSDSAImputer import SSSDSAImputer
-from imputers.SSSDImputer import SSSDS4Imputer
+from imputers.SSSDImputer import SSSDImputer
 
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
@@ -28,8 +28,7 @@ def train(output_directory,
           only_generate_missing,
           masking,
           missing_k,
-          missing_rate,
-          device):
+          missing_rate):
     """
     Train Diffusion Models
 
@@ -67,16 +66,15 @@ def train(output_directory,
     #     if key != "T":
     #         diffusion_hyperparams[key] = diffusion_hyperparams[key].to(device)
     # predefine model
-    with tf.device(device):
-        if use_model == 0:
-            net = DiffWaveImputer(**model_config)  # .to(device)
-        elif use_model == 1:
-            net = SSSDSAImputer(**model_config)  # .to(device)
-        elif use_model == 2:
-            net = SSSDS4Imputer(**model_config)  # .to(device)
-        else:
-            print('Model chosen not available.')
-            net = None
+    if use_model == 0:
+        net = DiffWaveImputer(**model_config)  # .to(device)
+    elif use_model == 1:
+        net = SSSDSAImputer(**model_config)  # .to(device)
+    elif use_model == 2:
+        net = SSSDImputer(**model_config)  # .to(device)
+    else:
+        print('Model chosen not available.')
+        net = None
     # print_size(net.summary())
 
 
@@ -111,8 +109,7 @@ def train(output_directory,
 
     # prepare X and Y for model.fit()
     training_data = np.load(trainset_config['train_data_path'])
-    with tf.device(device):
-        training_data = tf.convert_to_tensor(training_data, dtype=tf.float32)
+    training_data = tf.convert_to_tensor(training_data, dtype=tf.float32)
     print('Data loaded')
     B, C, L = training_data.shape  # B is batchsize, C is the dimension of each audio, L is audio length
 
@@ -143,11 +140,11 @@ def train(output_directory,
     _dh = diffusion_hyperparams
     T, Alpha_bar = _dh["T"], tf.cast(_dh["Alpha_bar"], tf.float32)
 
-    with tf.device(device):
-        diffusion_steps = tf.random.uniform(shape=(B,), maxval=T,
-                                            dtype=tf.int32)  # randomly sample diffusion steps from 1~T
 
-    z = std_normal(training_data.shape, device)
+    diffusion_steps = tf.random.uniform(shape=(B,), maxval=T,
+                                        dtype=tf.int32)  # randomly sample diffusion steps from 1~T
+
+    z = std_normal(training_data.shape)
     if only_generate_missing == 1:
         z = training_data * mask + z * (1. - mask)
     transformed_X = tf.cast(tf.math.sqrt(tf.reshape(tf.gather(Alpha_bar, diffusion_steps), shape=[B, 1, 1])),
@@ -155,7 +152,8 @@ def train(output_directory,
         1 - tf.reshape(tf.gather(Alpha_bar, diffusion_steps), shape=[B, 1, 1])),
         dtype=z.dtype) * z  # compute x_t from q(x_t|x_0)
 
-    X = [tf.cast(transformed_X, dtype=tf.float32), tf.cast(training_data, dtype=tf.float32), mask, tf.reshape(diffusion_steps, shape=(B, 1))]
+    # X = [tf.cast(transformed_X, dtype=tf.float32), tf.cast(training_data, dtype=tf.float32), mask, tf.reshape(diffusion_steps, shape=(B, 1))]
+    X = [tf.cast(training_data, dtype=tf.float32), mask, loss_mask]
 
     # define optimizer
     optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
@@ -166,27 +164,25 @@ def train(output_directory,
 
     tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=train_log_dir, histogram_freq=1)
     earlyStop_loss_callback = tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=3)
-    earlyStop_accu_call_back = tf.keras.callbacks.EarlyStopping(monitor='accuracy', mode='max', patience=3)
     best_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
                                             filepath=output_directory + "/" + local_path + '/' + current_time,
-                                            save_weights_only=False,
-                                            monitor='accuracy',
-                                            mode='max',
+                                            save_weights_only=True,
+                                            monitor='loss',
+                                            mode='min',
                                             save_best_only=True,
                                           )
 
     # training
     # net.build(input_shape=((model_config["in_channels"], None, ), (model_config["in_channels"], None, ), (model_config["in_channels"], None, ), (None,)))
     # net.summary()
-    net.compile(optimizer=optimizer, loss=loss, metrics=['accuracy'])
+    net.compile(optimizer=optimizer, loss=loss)
     net.fit(
         x=X,
-        y=z,
+        y=None,
         batch_size=64,
-        epochs=1000,
+        epochs=100,
         callbacks=[tensorboard_callback,
                    earlyStop_loss_callback,
-                   earlyStop_accu_call_back,
                    best_checkpoint_callback],
     )
 
