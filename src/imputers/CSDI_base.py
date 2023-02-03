@@ -126,30 +126,17 @@ def mask_missing_impute(data, mask):
     return observed_values, observed_masks, gt_masks
 
 
-def TrainDataset(series, missing_ratio_or_k=0.0, masking='rm', batch_size=None):
+def TrainDataset(series, missing_ratio_or_k=0.0, masking='rm'):
     B, L, K = series.shape
     observed_values_list = []
     observed_masks_list = []
     gt_masks_list = []
     if masking == 'holiday':
-        gt_masks = []
-        series = series.numpy()
-        for s in series:
-            observed_masks = ~np.isnan(s)  # NA: 0 ;has data: 1
-            holidays = np.unique(np.where(~observed_masks)[0])
-            missing_ratio = len(holidays) / L
-            gt_days = np.random.choice(np.unique(np.where(observed_masks)[0]), size=int(missing_ratio * L),
-                                       replace=False)
-            gt_mask = observed_masks
-            gt_mask[gt_days] = np.zeros_like(s[0], dtype=bool)
-            gt_masks.append(gt_mask)
-        gt_masks = np.array(gt_masks)
         observed_masks = ~np.isnan(series)
         series = np.nan_to_num(series)
         observed_values_tensor = tf.convert_to_tensor(series.astype('float32'))
         observed_masks_tensor = tf.convert_to_tensor(observed_masks.astype('float32'))
-        gt_mask_tensor = tf.convert_to_tensor(gt_masks.astype('float32'))
-        return [observed_values_tensor, observed_masks_tensor, gt_mask_tensor]
+        return [observed_values_tensor, observed_masks_tensor]
 
     for sample in series:
         if masking == 'rm':

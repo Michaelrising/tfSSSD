@@ -1,9 +1,9 @@
 {
     "train": {
-        "epochs": 200,
-        "batch_size": 64,
-        "lr": 0.0005,
-        "path_save": "../results/stocks/CSDI-transformer/20230125-110159/csdi_model"
+        "epochs": 100,
+        "batch_size": 4,
+        "lr": 0.001,
+        "path_save": "../results/stocks/all/CSDI-S4/20230203-074122_seq_800"
     },
     "diffusion": {
         "layers": 4,
@@ -14,7 +14,8 @@
         "beta_end": 0.5,
         "num_steps": 200,
         "schedule": "quad",
-        "time_layer": "transformer"
+        "time_layer": "S4",
+        "lmax": 800
     },
     "model": {
         "missing_ratio_or_k": 0.1,

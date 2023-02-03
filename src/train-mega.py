@@ -1,58 +1,24 @@
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import MinMaxScaler
 import os
 import argparse
 import json
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
-# from tensorflow.keras.optimizers.legacy import Adam
-import sys
 from datetime import datetime
-from utils.util import find_max_epoch, print_size, training_loss, calc_diffusion_hyperparams
-from utils.util import get_mask_mnr, get_mask_bm, get_mask_rm, std_normal, get_mask_holiday
-
-from imputers.DiffWaveImputer import DiffWaveImputer
-from imputers.SSSDSAImputer import SSSDSAImputer
-from imputers.SSSDImputer import SSSDImputer
-import matplotlib.pyplot as plt
-from sklearn.preprocessing import MinMaxScaler
-
-from einops import rearrange
-tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+from utils.util import  get_mask_holiday
+from imputers.MegaModel import MegaImputer
 
 
-def simple_imputer(x):
-    masks = np.isnan(x[:, 0])
-    index = np.where(masks)[0]
-    imputation = []
-    for d in index:
-        choice = np.array([d - 4, d - 3, d - 2, d - 1, d + 1, d + 2, d + 3, d + 4, d + 5])
-        choice = choice[(choice > 0) * (choice < x.shape[0] - 1)]
-        m = ~np.isin(choice, index)
-        choice = choice[m]
-        dd = x[choice].reshape(-1, x.shape[1])
-        imputation.append(np.mean(dd, axis=0))
-    x[masks] = np.array(imputation)
-    return x
-
-
-# @tf.function
 def train(output_directory,
           log_directory,
-          ckpt_iter,
-          n_iters,
-          iters_per_ckpt,
-          iters_per_logging,
           learning_rate,
-          use_model,
-          only_generate_missing,
-          masking,
-          missing_k,
-          missing_rate,
           batch_size,
           epochs,
           alg=None,
           stock=None,
-          seq_len=1000,
+          seq_len=200,
           ):
     """
     Train Diffusion Models
@@ -73,32 +39,23 @@ def train(output_directory,
     masking(str):                   'mnr': missing not at random, 'bm': blackout missing, 'rm': random missing
     missing_k (int):                k missing time steps for each feature across the sample length.
     """
-    if alg == 'S4':
-        print('=' * 50)
-        print("=" * 22 + 'SSSD-S4' + "=" * 21)
-        print('=' * 50)
-    elif alg == 'S5':
-        print('=' * 50)
-        print("=" * 22 + 'SSSD-S5' + "=" * 21)
-        print('=' * 50)
-    elif alg == 'Mega':
-        print('=' * 50)
-        print("=" * 21 + 'SSSD-Mega' + "=" * 20)
-        print('=' * 50)
+
+    print('=' * 50)
+    print("=" * 23 + 'Mega' + "=" * 22)
+    print('=' * 50)
 
     # generate experiment (local) path
     current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-    local_path = stock + '/SSSD-' + alg + '/' + current_time + '_seq_{}_T_{}_Layers_{}'.format(seq_len,diffusion_config['T'], model_config['num_res_layers'])
+    local_path = '/' + current_time + '_seq_{}_Layers_{}'.format(seq_len, model_config['depth'])
 
     # Get shared output_directory ready
-    output_directory = os.path.join(output_directory, local_path)
+    output_directory = output_directory + local_path
     if not os.path.isdir(output_directory):
         os.makedirs(output_directory)
         os.chmod(output_directory, 0o775)
     print("output directory", output_directory, flush=True)
 
-    train_log_dir = log_directory + stock + '/SSSD-' + alg + '/' + current_time + '_seq_{}_T_{}_Layers_{}'.format(
-        seq_len, diffusion_config['T'], model_config['num_res_layers'])
+    train_log_dir = log_directory + local_path
     if not os.path.isdir(train_log_dir):
         os.makedirs(train_log_dir)
         os.chmod(output_directory, 0o775)
@@ -115,8 +72,13 @@ def train(output_directory,
         scalar0 = MinMaxScaler()
         ticker_data = np.array([scalar0.fit_transform(tk) for tk in ticker_data.transpose([1, 0, 2])]).transpose([1, 0, 2])  # N L C -> L N C
         # generate masks: observed_masks + man_made mask
-        ticker_mask = get_mask_holiday(ticker_data)  # N L C
+        ticker_mask = get_mask_holiday(ticker_data, ratio=2)  # N L C
         ticker_mask = ticker_mask.numpy().transpose([1, 0, 2]) # L N C
+        # ticker_mask = (~np.isnan(ticker_data)).astype(np.float32)
+        # for i in range(0, ticker_data.shape[0] - args.seq_len, args.mw):
+        #     ticker_chunk = ticker_data[i:i + args.seq_len]  # L N C
+        #     training_data.append(ticker_chunk)
+        #     training_mask.append(ticker_mask[i:i + args.seq_len])
         for i in range(ticker_data.shape[0] // args.seq_len):
             ticker_chunk = ticker_data[args.seq_len * i:args.seq_len * (i + 1)] # L N C
             training_data.append(ticker_chunk)
@@ -129,7 +91,6 @@ def train(output_directory,
     np.random.shuffle(training_all)
     training_data = training_all[..., :5].transpose([1, 0, 2]) # L B K
     training_mask = training_all[..., 5:].transpose([1, 0, 2]) # L B K
-    print('Loading stocks data: ' + stock)
     print(training_data.shape)
 
     print('Data loaded')
@@ -137,44 +98,28 @@ def train(output_directory,
     L, N, K = training_data.shape  # C is the dimension of each audio, L is audio length, N is the audio batch
 
     # generate masks: observed_masks + man_made mask
-
+    observed_mask = (~np.isnan(training_data)).astype(np.float32)
+    observed_mask = tf.transpose(tf.convert_to_tensor(observed_mask, tf.float32),  perm=[1, 2, 0])
     training_data = tf.transpose(tf.convert_to_tensor(np.nan_to_num(training_data), dtype=tf.float32), perm=[1, 2, 0])  # batch dim # L N C -> [N C L]
     print("missing rate:" + str(1-np.sum(training_mask)/(N*K*L)))
     training_mask = tf.transpose(tf.convert_to_tensor(training_mask, dtype=tf.float32), perm=[1, 2, 0]) # batch dim # L N C -> [N C L]
-    if only_generate_missing:
-        loss_mask = tf.cast(1.-training_mask, tf.bool)
-    else:
-        loss_mask = tf.cast(tf.ones_like(training_mask), tf.bool)
+    loss_mask = tf.cast(observed_mask - training_mask, tf.bool) #tf.cast(observed_mask - training_mask, tf.bool)
 
     assert training_data.shape == training_mask.shape == loss_mask.shape
 
-    model_config['s4_lmax'] = L
-
-    if use_model == 0:
-        net = DiffWaveImputer(**model_config)
-    elif use_model == 1:
-        net = SSSDSAImputer(**model_config)
-    elif use_model == 2:
-        net = SSSDImputer(**model_config, alg=alg)
-    else:
-        print('Model chosen not available.')
-        net = None
+    model = MegaImputer(**model_config)
 
     ############ Save config file #######
-    config[ "diffusion_config"] = diffusion_config
-    config['wavenet_config'] = model_config
-    config['train_config'] = train_config
-
-    config_filename = train_log_dir + '/config_SSSD_stocks_seq_{}_T_{}_Layers_{}'.format(seq_len,diffusion_config['T'], model_config['num_res_layers'])
-    print('configuration file name:', config_filename)
-    with open(config_filename + ".json", "w") as f:
-        json.dump(config, f, indent=4)
 
 
-    # prepare X
-    noise = tf.random.normal(shape=tf.shape(training_data), dtype=training_data.dtype)
-    diffusion_steps = tf.random.uniform(shape=(tf.shape(training_data)[0], 1, 1), maxval=model_config['T'], dtype=tf.int32)  # randomly sample diffusion steps from 1~T
-    X = [noise, training_data, training_mask, loss_mask, diffusion_steps]
+    # prepare X & Y
+    training_data = tf.transpose(training_data, perm=[0, 2, 1])
+    training_mask = tf.transpose(training_mask, perm=[0, 2, 1])
+    loss_mask =  tf.transpose(loss_mask, perm=[0, 2, 1])
+
+    X = [training_data,training_mask ,loss_mask]
+    Y = training_data
+
     # define optimizer
     p1 = int(0.5 * epochs * N//batch_size)
     p2 = int(0.75 * epochs * N//batch_size)
@@ -183,7 +128,7 @@ def train(output_directory,
     values = [learning_rate, learning_rate * 0.1]
 
     learning_rate_fn = keras.optimizers.schedules.PiecewiseConstantDecay(boundaries, values)
-    optimizer = keras.optimizers.Adam(learning_rate=learning_rate_fn, epsilon=1e-6, amsgrad=True)
+    optimizer = keras.optimizers.Adam(learning_rate=learning_rate, epsilon=1e-6)
 
     # define loss
 
@@ -200,10 +145,12 @@ def train(output_directory,
                                           )
 
     # training
-    net.compile(optimizer=optimizer, loss=loss)
-    history = net.fit(
+    model.compile(optimizer=optimizer, loss=loss)
+
+    # model.train_step(([training_data[:16], training_mask[:16], loss_mask[:16]], training_data[:16]))
+    history = model.fit(
         x=X,
-        y=None,
+        y=Y,
         batch_size=batch_size,
         epochs=epochs,
         validation_split=0.1,
@@ -218,25 +165,20 @@ def train(output_directory,
     plt.title("Training Loss")
     plt.savefig(train_log_dir + '/training.png')
     plt.show()
-    net.summary()
-
-    # np.save(log_directory + 'SSSD-' + alg + '/' + current_time + '/observed_data.npy', training_data.numpy())
-
-    # np.save(train_log_dir + '/stock_data_seq_len_'+str(seq_len) +'.npy', training_data.numpy())
+    model.summary()
 
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('-c', '--config', type=str, default='/config/config_SSSD_stocks.json',
-                        help='JSON file for configuration')
+    # parser.add_argument('-c', '--config', type=str, default='/config/config_SSSD_stocks.json',
+    #                     help='JSON file for configuration')
     parser.add_argument('-ignore_warning', type=str, default=True)
-    parser.add_argument('--cuda', type=int, default=1)
-    parser.add_argument('--alg', type=str, default='S4')
+    parser.add_argument('--cuda', type=int, default=0)
     parser.add_argument('--stock', type=str, default='all')
-    parser.add_argument('--batch_size', type=int, default=32)
-    parser.add_argument('--seq_len', type=int, default=400)
-    parser.add_argument('--num_layers', type=int, default=18)
+    parser.add_argument('--batch_size', type=int, default=20)
+    parser.add_argument('--seq_len', type=int, default=200)
+    parser.add_argument('--epochs', type=int, default=30)
     args = parser.parse_args()
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda)
@@ -256,43 +198,23 @@ if __name__ == "__main__":
         # Disable absl INFO and WARNING log messages
         from absl import logging as absl_logging
         absl_logging.set_verbosity(absl_logging.ERROR)
-
-    sys.path.append(os.getcwd() + args.config)
-    with open(os.getcwd() + args.config) as f:
-        data = f.read()
-
-    global config
-    config = json.loads(data)
-
-    config['train_config']["alg"] = args.alg
-    config['train_config']["stock"] = args.stock
-    config['train_config']["batch_size"] = args.batch_size
-    config['train_config']["seq_len"] = args.seq_len
-
-
-    print(config)
-
-    train_config = config["train_config"]  # training parameters
-
-
-    global trainset_config
-    trainset_config = config["trainset_config"]  # to load trainset
-
-    global diffusion_config
-    diffusion_config = config["diffusion_config"]  # basic hyperparameters
-
-    global diffusion_hyperparams
-    diffusion_hyperparams = calc_diffusion_hyperparams(
-        **diffusion_config)  # dictionary of all diffusion hyperparameters
-
     global model_config
-    if train_config['use_model'] == 0:
-        model_config = config['wavenet_config']
-    elif train_config['use_model'] == 1:
-        model_config = config['sashimi_config']
-    elif train_config['use_model'] == 2:
-        model_config = config['wavenet_config']
-    model_config['num_res_layers'] = args.num_layers
+    model_config = {}
+    model_config['in_feature'] = 5
+    model_config['mid_features'] = 128  # original name is dim
+    model_config['depth'] = 8
+    model_config['out_features'] = 5
+    model_config['chunk_size'] = -1
+    model_config['ff_mult'] = 2
+    model_config['pre_norm'] = True
 
-    tf.debugging.set_log_device_placement(True)
-    train(**train_config)
+    output_directory = '../results/stocks/' + args.stock + "/Mega/"
+    log_directory = '../log/stocks/' + args.stock + "/Mega/"
+    learning_rate = 1e-3
+    train(output_directory,
+          log_directory,
+          learning_rate,
+          args.batch_size,
+          args.epochs,
+          args.seq_len,
+          )

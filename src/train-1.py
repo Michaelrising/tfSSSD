@@ -141,19 +141,19 @@ def train(output_directory,
     T, Alpha_bar = _dh["T"], tf.cast(_dh["Alpha_bar"], tf.float32)
 
 
-    diffusion_steps = tf.random.uniform(shape=(B,), maxval=T,
+    diffusion_steps = tf.random.uniform(shape=(B,1), maxval=T,
                                         dtype=tf.int32)  # randomly sample diffusion steps from 1~T
 
     z = std_normal(training_data.shape)
-    if only_generate_missing == 1:
-        z = training_data * mask + z * (1. - mask)
-    transformed_X = tf.cast(tf.math.sqrt(tf.reshape(tf.gather(Alpha_bar, diffusion_steps), shape=[B, 1, 1])),
-                            dtype=training_data.dtype) * training_data + tf.cast(tf.math.sqrt(
-        1 - tf.reshape(tf.gather(Alpha_bar, diffusion_steps), shape=[B, 1, 1])),
-        dtype=z.dtype) * z  # compute x_t from q(x_t|x_0)
+    # if only_generate_missing == 1:
+    #     z = training_data * mask + z * (1. - mask)
+    # transformed_X = tf.cast(tf.math.sqrt(tf.reshape(tf.gather(Alpha_bar, diffusion_steps), shape=[B, 1, 1])),
+    #                         dtype=training_data.dtype) * training_data + tf.cast(tf.math.sqrt(
+    #     1 - tf.reshape(tf.gather(Alpha_bar, diffusion_steps), shape=[B, 1, 1])),
+    #     dtype=z.dtype) * z  # compute x_t from q(x_t|x_0)
 
     # X = [tf.cast(transformed_X, dtype=tf.float32), tf.cast(training_data, dtype=tf.float32), mask, tf.reshape(diffusion_steps, shape=(B, 1))]
-    X = [tf.cast(training_data, dtype=tf.float32), mask, loss_mask]
+    X = [z, tf.cast(training_data, dtype=tf.float32), mask, loss_mask, diffusion_steps]
 
     # define optimizer
     optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
@@ -181,6 +181,7 @@ def train(output_directory,
         y=None,
         batch_size=64,
         epochs=100,
+        validation_split=0.1,
         callbacks=[tensorboard_callback,
                    earlyStop_loss_callback,
                    best_checkpoint_callback],
@@ -191,7 +192,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', type=str, default='/config/config_SSSD.json',
                         help='JSON file for configuration')
-
+    os.environ["CUDA_VISIBLE_DEVICES"] = str('1')
     args = parser.parse_args()
     sys.path.append(os.getcwd() + args.config)
     with open(os.getcwd() + args.config) as f:

@@ -218,7 +218,6 @@ def sampling(net, diffusion_hyperparams, only_generate_missing, cond, mask, num_
 def imputer(net, T, Alpha, Alpha_bar, Sigma, size, only_generate_missing, cond, mask):
     # pbar = tqdm(total=T)
     t = T - 1
-    loss_mask = tf.constant(1.0) - mask
     # current_sample = tf.TensorArray(dtype=tf.float32, size=1, clear_after_read=False)
     # current_sample = current_sample.write(0, tf.random.normal(size, dtype=cond.dtype))
     current_sample = tf.random.normal(size, dtype=cond.dtype)
@@ -226,7 +225,7 @@ def imputer(net, T, Alpha, Alpha_bar, Sigma, size, only_generate_missing, cond, 
         # if only_generate_missing == 1:
         current_sample = current_sample * (1.0 - mask) + cond * mask
         diffusion_steps = tf.cast(t * tf.ones((size[0], 1)), tf.int32)  # use the corresponding reverse step
-        epsilon_theta = tf.stop_gradient(net(input_data=(current_sample, cond, mask),
+        epsilon_theta = tf.stop_gradient(net(input_data=(current_sample, cond, mask, diffusion_steps),
                                              training=False))  # predict \epsilon according to \epsilon_\theta
         # update x_{t-1} to \mu_\theta(x_t)
         current_sample = (current_sample - (1 - Alpha[t]) / tf.math.sqrt(
@@ -332,14 +331,14 @@ def get_mask_bm(sample, k):
     return tf.convert_to_tensor(mask)
 
 
-def get_mask_holiday(sample):
+def get_mask_holiday(sample, ratio=1):
     L, N, C = sample.shape
     sample = sample.transpose([1, 0, 2])
     gt_masks = []
     for s in sample:
         observed_masks = ~np.isnan(s)  # NA: 0 ;has data: 1
         holidays = np.unique(np.where(~observed_masks)[0])
-        missing_ratio = len(holidays)/L
+        missing_ratio = len(holidays)/L * ratio
         gt_days = np.random.choice(np.unique(np.where(observed_masks)[0]), size=int(missing_ratio*L), replace=False)
         # B, C, L = sample.shape
         # observed_masks = ~np.isnan(sample) # NA: 0 ;has data: 1

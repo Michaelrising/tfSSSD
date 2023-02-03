@@ -12,7 +12,7 @@
       <paths name="SZServer">
         <serverdata>
           <mappings>
-            <mapping deploy="/projects/tfSSSD" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="~/projects/tfSSSD" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
