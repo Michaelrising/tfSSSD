@@ -8,9 +8,7 @@ from utils.util import find_max_epoch, print_size, sampling, calc_diffusion_hype
 from functools import partial
 from tensorflow import keras
 import tensorflow as tf
-from imputers.DiffWaveImputer import DiffWaveImputer
-from imputers.SSSDSAImputer import SSSDSAImputer
-from imputers.SSSDImputer import SSSDImputer
+from imputers.MegaModel import  MegaImputer
 from tqdm import tqdm
 from sklearn.metrics import mean_squared_error
 from sklearn.preprocessing import MinMaxScaler
@@ -21,7 +19,6 @@ from einops import rearrange
 def generate(num_samples,
              only_generate_missing,
              batch_size,
-             alg,
              stock):
     """
     Generate data based on ground truth
@@ -39,14 +36,9 @@ def generate(num_samples,
     missing_k (int)                   k missing time points for each channel across the length.
     """
 
-
-    # map diffusion hyperparameters to gpu
-    for key in diffusion_hyperparams:
-        if key != "T":
-            diffusion_hyperparams[key] = diffusion_hyperparams[key]
-    net = SSSDImputer(**model_config, alg=alg)
+    net = MegaImputer(**config)
     # load checkpoint
-    ckpt_path = "../results/stocks/" + stock +'/SSSD-' + alg + '/' + past_time
+    ckpt_path = "../results/stocks/" + stock +'/MEGA/' + past_time +'/'
     try:
         # reload model
         net.load_weights(ckpt_path).expect_partial()
@@ -107,15 +99,11 @@ def generate(num_samples,
             mask = tf.convert_to_tensor(eval_mask[i])
             mask = tf.cast(mask, tf.float32)
             batch = tf.cast(tf.convert_to_tensor(np.nan_to_num(batch)), tf.float32)
-
-            generated_audio = sampling(net=net,
-                                       diffusion_hyperparams=diffusion_hyperparams,
-                                       num_samples=num_samples,
-                                       cond=batch,
-                                       mask=mask,
-                                       only_generate_missing=only_generate_missing)
-
-            generated_audio = generated_audio.numpy() # num_sample N L C
+            X = [batch, mask]
+            generated_audio = []
+            for n in range(num_samples):
+                generated_audio.append(net(X))
+            generated_audio = np.array(generated_audio) #rearrange(, ' n b h l -> n b l h') # num_sample B H L
             all_generated_samples.append(generated_audio)
             generated_audio_median = np.median(generated_audio, axis=0)
             target_mask = observed_masks - mask.numpy()
@@ -138,13 +126,12 @@ def generate(num_samples,
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--T', default=200)
-    parser.add_argument('--seq_len', default=200, type=int)
-    parser.add_argument('--num_layers', default=18)
+    parser.add_argument('--seq_len', default=100, type=int)
+    parser.add_argument('--num_layers', default=36)
     parser.add_argument('-n', '--num_samples', type=int, default=10,
                         help='Number of utterances to be generated')
     parser.add_argument('--ignore_warning', type=str, default=True)
-    parser.add_argument('--cuda', type=int, default=1)
-    parser.add_argument('--alg', type=str, default='Mega')
+    parser.add_argument('--cuda', type=int, default=0)
     parser.add_argument('--stock', type=str, default='all')
     parser.add_argument('--batch_size', type=int, default=128)
     args = parser.parse_args()
@@ -170,14 +157,14 @@ if __name__ == "__main__":
 
     # generate experiment (local) path
     past_time = '00000000000000' #+ '_seq_{}_T_{}_Layers_{}'.format(args.seq, args.T, 20)
-    files_list = os.listdir("../results/stocks/" + args.stock + '/SSSD-' + args.alg)
+    files_list = os.listdir("../results/stocks/" + args.stock + '/MEGA/')
     # files_list = os.listdir(output_directory   + '/SSSD-' + alg)
     for file in files_list:
-        if file.startswith('202302') and file.endswith('_seq_{}_T_{}_Layers_{}'.format(args.seq_len, args.T, args.num_layers)):
+        if file.startswith('202302') and file.endswith('_seq_{}'.format(args.seq_len)):
             past_time = max(int(past_time), int(file[:8] + file[9:15]))
-    past_time = str(past_time)[:8] + '-' + str(past_time)[8:] + '_seq_{}_T_{}_Layers_{}'.format(args.seq_len, args.T, args.num_layers)
-    # past_time = '20230204-172725_seq_200_T_200_Layers_18'
-    local_path = args.stock + '/SSSD-' + args.alg + '/' + past_time + '/generated_samples'
+    past_time = str(past_time)[:8] + '-' + str(past_time)[8:] + '_seq_{}'.format(args.seq_len)
+    # past_time = '20230201-134917_seq_100_T_100_Layers_20'
+    local_path = args.stock + '/MEGA/' + past_time + '/generated_samples'
     # local_path = 'SSSD-' + alg + '/' + past_time + '/generated_samples'
 
     # Get shared output_directory ready
@@ -187,8 +174,8 @@ if __name__ == "__main__":
         os.chmod(output_directory, 0o775)
     print("output directory: ", output_directory, flush=True)
 
-    train_log_dir = '../log/stocks/' + args.stock + '/SSSD-' + args.alg + '/' + past_time +'/'
-    config_name = 'config_SSSD_stocks_seq_{}_T_{}_Layers_{}.json'.format(args.seq_len, args.T, args.num_layers)
+    train_log_dir = '../log/stocks/' + args.stock + '/MEGA/' + past_time +'/'
+    config_name = 'config_mega.json.json'
 
 
     # Parse configs. Globals nicer in this case
@@ -199,32 +186,31 @@ if __name__ == "__main__":
     print(config)
 
     config = json.loads(data)
-
-    gen_config = config['gen_config']
-
-    train_config = config["train_config"]  # training parameters
-
-    global trainset_config
-    trainset_config = config["trainset_config"]  # to load trainset
-
-    global diffusion_config
-    diffusion_config = config["diffusion_config"]  # basic hyperparameters
-
-    global diffusion_hyperparams
-    diffusion_hyperparams = calc_diffusion_hyperparams(
-        **diffusion_config)  # dictionary of all diffusion hyperparameters
-
-    global model_config
-    if train_config['use_model'] == 0:
-        model_config = config['wavenet_config']
-    elif train_config['use_model'] == 1:
-        model_config = config['sashimi_config']
-    elif train_config['use_model'] == 2:
-        model_config = config['wavenet_config']
+    #
+    # gen_config = config['gen_config']
+    #
+    # train_config = config["train_config"]  # training parameters
+    #
+    # global trainset_config
+    # trainset_config = config["trainset_config"]  # to load trainset
+    #
+    # global diffusion_config
+    # diffusion_config = config["diffusion_config"]  # basic hyperparameters
+    #
+    # global diffusion_hyperparams
+    # diffusion_hyperparams = calc_diffusion_hyperparams(
+    #     **diffusion_config)  # dictionary of all diffusion hyperparameters
+    #
+    # global model_config
+    # if train_config['use_model'] == 0:
+    #     model_config = config['wavenet_config']
+    # elif train_config['use_model'] == 1:
+    #     model_config = config['sashimi_config']
+    # elif train_config['use_model'] == 2:
+    #     model_config = config['wavenet_config']
 
     generate(num_samples=args.num_samples,
-             only_generate_missing=train_config["only_generate_missing"],
+             only_generate_missing=1,
              batch_size=args.batch_size,
-             alg=args.alg,
              stock=args.stock,
              )

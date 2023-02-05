@@ -137,7 +137,7 @@ def train(output_directory,
     L, N, K = training_data.shape  # C is the dimension of each audio, L is audio length, N is the audio batch
 
     # generate masks: observed_masks + man_made mask
-
+    # observed_mask = (~np.isnan(training_data)).astype(np.float32)
     training_data = tf.transpose(tf.convert_to_tensor(np.nan_to_num(training_data), dtype=tf.float32), perm=[1, 2, 0])  # batch dim # L N C -> [N C L]
     print("missing rate:" + str(1-np.sum(training_mask)/(N*K*L)))
     training_mask = tf.transpose(tf.convert_to_tensor(training_mask, dtype=tf.float32), perm=[1, 2, 0]) # batch dim # L N C -> [N C L]

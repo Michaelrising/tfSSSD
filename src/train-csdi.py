@@ -18,7 +18,6 @@ if __name__ == "__main__":
     parser.add_argument('--target_strategy', type=str, default='holiday', help='The target strategy')
     parser.add_argument('--amsgrad', type=bool, default=False, help='The optimizer whether uses AMSGrad')
     parser.add_argument('--seq_len', type=int, default=200)
-    parser.add_argument('--mw', default=5, type=int)
     args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda)
     os.environ['TF_GPU_ALLOCATOR']='cuda_malloc_async'

@@ -269,7 +269,7 @@ class S5Layer(keras.layers.Layer):
                 C_init='lecun_normal',
                 dt_min=0.001,
                 dt_max=0.1,
-                conj_sym = True,
+                conj_sym = False,
                 clip_eigs = False,
                 bidirectional = False,
                 step_rescale = 1.0,
@@ -385,13 +385,9 @@ class S5Layer(keras.layers.Layer):
             C_shape = (self.H, self.P, 2)
             if self.bidirectional:
                 c1 = init_CV(C_init, C_shape, self.V)
-                self.C1 = tf.Variable(c1, trainable=False, name='C1')
+                self.C1 = tf.Variable(c1, trainable=True, name='C1')
                 c2 = init_CV(C_init, C_shape, self.V)
-                self.C2 = tf.Variable(c2, trainable=False, name='C1')
-
-                C1 = tf.complex(self.C1[..., 0], self.C1[..., 1])
-                C2 = tf.complex(self.C2[..., 0], self.C2[..., 1])
-                self.C_tilde = tf.Variable(tf.concat((C1, C2), axis=-1), dtype=tf.complex64, name='C_tilde')
+                self.C2 = tf.Variable(c2, trainable=True, name='C1')
 
             else:
                 # c_rng = tf.random.Generator.make_seeds(count=1)
@@ -492,9 +488,11 @@ class S5Layer(keras.layers.Layer):
             _, xs2 = tf.vectorized_map(reversed_scan_binary_operator, (Lambda_elements, Bu_elements))
 
             xs = tf.concat((xs, xs2), axis=-1)
+            C_tilde = tf.concat((tf.complex(self.C1[..., 0], self.C1[..., 1]), tf.complex(self.C2[..., 0], self.C2[..., 1])), axis=-1)
         # xs has shape B L P or B L 2P
         # the return has shape
-        C_tilde = tf.complex(self.C[..., 0], self.C[..., 1])
+        else:
+            C_tilde = tf.complex(self.C[..., 0], self.C[..., 1])
         if self.conj_sym:
             ys = tf.vectorized_map(lambda x: 2.0 * tf.math.real(tf.einsum('h p, l p -> l h', C_tilde, x)),
                                      xs)  # h p, b l p -> b l h
@@ -507,12 +505,12 @@ class S5Layer(keras.layers.Layer):
         y = ys + Du # B L H
 
         # add non-linear activation to features
+        y = self.out_linear(y)  # B L H
         y = self.dropout(self.activation(y))  # dropout needs input of (samples, timesteps, channels) which is B L H
-        y = self.out_linear(y) # B L H
 
         return self.norm_layer(y)  # apply normalization to features
 
-    @tf.function
+    # @tf.function
     def binary_operator(self, q_i, q_j):
         """ Binary operator for parallel scan of linear recurrence. Assumes a diagonal matrix A.
             Args:

@@ -16,25 +16,26 @@ class Imputer:
     def __init__(self,
                  model_path,
                  log_path,
-                 alg,
+                 model,
+                 alg=None,
                  seq_len=200,
-                 in_feature=2,
-                 out_feature=2,
-                 model=None,
+                 in_feature=5,
+                 out_feature=5,
                  *args,
                  **kwargs):
-        path_name = '/' + model.toUpperCase() + "-" + alg + '/' + datetime.now().strftime("%Y%m%d-%H%M%S") + "_seq_{}/".format(seq_len)
+
+        path_name = '/' + datetime.now().strftime("%Y%m%d-%H%M%S") + "_seq_{}".format(seq_len)
         self.model_path = model_path + path_name
-        self.log_path = log_path  + path_name
+        self.log_path = log_path + path_name
 
         self.seq_len = seq_len
 
         if model == 'sssd':
-            self.model = self.construct_sssd_s4(in_feature, out_feature)
+            self.model = self.construct_sssd_s4(in_feature, out_feature, alg=alg)
         elif model =='mega':
             self.model = self.construct_mega_model(in_feature, out_feature)
         elif model == 'csdi':
-            self.model = self.construct_csdi_model(in_feature, out_feature)
+            self.model = self.construct_csdi_model(in_feature, out_feature, alg=alg)
         else: raise ValueError
 
     def train(self,
@@ -64,7 +65,10 @@ class Imputer:
         optimizer = keras.optimizers.Adam(learning_rate=learning_rate_fn, epsilon=1e-6, amsgrad=amsgrad)
 
         # define loss
-        loss = keras.losses.MeanSquaredError()
+        if isinstance(self.model, CSDIImputer):
+            loss = None
+        else:
+            loss = keras.losses.MeanSquaredError()
 
         # define callback
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=self.log_path, histogram_freq=1)
@@ -99,11 +103,15 @@ class Imputer:
         self.model.summary()
 
     def prepare_x_y(self, training_data, training_mask):
+        observed_mask = (~np.isnan(training_data)).astype(np.float32)
+        training_data = np.nan_to_num(training_data)
         training_data = tf.transpose(tf.convert_to_tensor(training_data, dtype=tf.float32),
                                      perm=[1, 2, 0])  # batch dim # L N C -> [N C L]
         training_mask = tf.transpose(tf.convert_to_tensor(training_mask, dtype=tf.float32),
                                      perm=[1, 2, 0])  # batch dim # L N C -> [N C L]
-        loss_mask = tf.cast(1.0 - training_mask, tf.bool)
+        observed_mask = tf.transpose(tf.convert_to_tensor(observed_mask, dtype=tf.float32),
+                                     perm=[1, 2, 0]) # batch dim # L N C -> [N C L]
+        loss_mask = tf.cast(1. - training_mask, tf.bool)
         if isinstance(self.model, SSSDImputer):
             noise = tf.random.normal(shape=tf.shape(training_data), dtype=training_data.dtype)
             diffusion_steps = tf.random.uniform(shape=(tf.shape(training_data)[0], 1, 1), maxval=self.config['T'],
@@ -111,6 +119,7 @@ class Imputer:
             X = [noise, training_data, training_mask, loss_mask, diffusion_steps]
             Y = None
         elif isinstance(self.model, MegaImputer):
+            loss_mask = tf.cast(observed_mask - training_mask, tf.bool) # Mega is not generative model, so the real missing data should be masked in loss
             X = [training_data, training_mask, loss_mask]
             Y = training_data
         elif  isinstance(self.model, CSDIImputer):
@@ -183,7 +192,14 @@ class Imputer:
         self.config["alg"] = alg
         self.config["only_generate_missing"] = 1
 
-        config_filename = self.log_path + "_T_{}_Layers_{}".format(T, num_res_layers) + '/config_SSSD_stocks' + "_T_{}_Layers_{}".format(T, num_res_layers) +'.json'
+        self.log_path = self.log_path + "_T_{}_Layers_{}".format(T, num_res_layers)
+        self.model_path += "_T_{}_Layers_{}/".format(T, num_res_layers)
+        if not os.path.exists(self.log_path):
+            os.mkdir(self.log_path)
+        if not os.path.exists(self.model_path):
+            os.mkdir(self.model_path)
+
+        config_filename = self.log_path  + '/config_SSSD_stocks' + "_T_{}_Layers_{}".format(T, num_res_layers) +'.json'
         print('configuration file name:', config_filename)
         with open(config_filename + ".json", "w") as f:
             json.dump(self.config, f, indent=4)
@@ -207,6 +223,14 @@ class Imputer:
         self.config['chunk_size'] = chunk_size
         self.config['ff_mult'] = 2
         self.config['pre_norm'] = pre_norm
+
+        self.log_path += '/'
+        self.model_path += '/'
+        if not os.path.exists(self.log_path):
+            os.mkdir(self.log_path)
+        if not os.path.exists(self.model_path):
+            os.mkdir(self.model_path)
+
         model = MegaImputer(**self.config)
         config_filename = self.log_path+'/config_mega.json'
         print('configuration file name:', config_filename)
@@ -265,11 +289,17 @@ class Imputer:
         self.config['model']['masking'] = masking
 
         print(json.dumps(self.config, indent=4))
+        self.log_path += '/'
+        self.model_path += '/'
+        if not os.path.exists(self.log_path):
+            os.mkdir(self.log_path)
+        if not os.path.exists(self.model_path):
+            os.mkdir(self.model_path)
 
         config_filename = self.log_path + '/config_csdi_training_holiday.json'
         print('configuration file name:', config_filename)
         with open(config_filename + ".json", "w") as f:
             json.dump(self.config, f, indent=4)
-        model = CSDIImputer(**self.config)
+        model = CSDIImputer(self.config)
 
         return model

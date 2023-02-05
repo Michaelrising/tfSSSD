@@ -1,8 +1,4 @@
-import numpy as np
-import tensorflow as tf
-from tensorflow import keras
-import tensorflow_addons as tfa
-from .CSDIImputer import CSDIImputer, TrainDataset
+from .CSDIImputer import *
 import matplotlib.pyplot as plt
 import os
 import json
@@ -196,12 +192,13 @@ class CSDI:
 
         self.config['model']['masking'] = masking
         self.config['diffusion']['lmax'] = series.shape[0]
+        self.config['model']['target_dim'] = 5
         config_filename = self.config_path + "/config_csdi_training_" + masking
         print('configuration file name:', config_filename)
         with open(config_filename + ".json", "w") as f:
             json.dump(self.config, f, indent=4)
 
-        self.model = CDSIImputer(series.shape[2], self.config)
+        self.model = CSDIImputer(self.config)
 
         # define optimizer
         p1 = int(0.6 * self.epochs * series.shape[1] / self.batch_size)

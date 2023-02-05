@@ -5,7 +5,6 @@ from tensorflow import keras
 from einops import rearrange
 from scipy.fftpack import next_fast_len
 import numpy as np
-from utils.util import calc_diffusion_step_embedding
 
 # functions
 
@@ -421,10 +420,11 @@ class MegaEncoderLayer(keras.layers.Layer):
                  features,
                  ff_mult,
                  pre_norm=True,
+                 causal=False,
                  **kwargs):
         super().__init__()
         self.pre_norm = pre_norm
-        self.mega_layer = MegaLayer(features=features, chunk_size=chunk_size, **kwargs)
+        self.mega_layer = MegaLayer(features=features, chunk_size=chunk_size, causal=causal, **kwargs)
         self.ffn = FeedForward(dim=features, ff_mult=ff_mult)
         self.norm = keras.layers.LayerNormalization(axis=-1)
 
@@ -434,11 +434,11 @@ class MegaEncoderLayer(keras.layers.Layer):
         # if self.pre_norm:
         #     x = self.norm(x)
         x = self.mega_layer(x)
-        if self.pre_norm:
-            x = self.norm(x)
+        # if self.pre_norm:
+        x = self.norm(x)
         x = self.ffn(x) + x
-        if not self.pre_norm:
-            x = self.norm(x)
+        # if not self.pre_norm:
+        x = self.norm(x)
         return x
 
 
@@ -448,10 +448,11 @@ class MegaDecoderLayer(keras.layers.Layer):
                  features,
                  ff_mult,
                  pre_norm=True,
+                 causal=True,
                  **kwargs):
         super().__init__()
         self.pre_norm = pre_norm
-        self.causal_mega_layer = MegaLayer(features=features, chunk_size=chunk_size, causal=True, **kwargs)
+        self.causal_mega_layer = MegaLayer(features=features, chunk_size=chunk_size, causal=causal, **kwargs)
         # self.mega_layer = MegaLayer(features=features, chunk_size=chunk_size, **kwargs)
         self.ffn = FeedForward(dim=features, ff_mult=ff_mult)
         self.norm = keras.layers.LayerNormalization(axis=-1)
@@ -461,11 +462,11 @@ class MegaDecoderLayer(keras.layers.Layer):
         # if self.pre_norm:
         #     x = self.norm(x)
         x = self.causal_mega_layer(x)
-        if self.pre_norm:
-            x = self.norm(x)
+        # if self.pre_norm:
+        x = self.norm(x)
         x = self.ffn(x) + x
-        if not self.pre_norm:
-            x = self.norm(x)
+        # if not self.pre_norm:
+        x = self.norm(x)
         return x
 
 
@@ -473,13 +474,14 @@ class MegaEncoder(keras.layers.Layer):
     def __init__(self,
                  chunk_size,
                  features,
-                 ff_mult,
-                 depth,
+                 ff_mult=2,
+                 depth=8,
+                 causal=False,
                  **kwargs):
         super().__init__(**kwargs)
         self.encoder_layers = []
         for _ in range(depth):
-            self.encoder_layers.append(MegaDecoderLayer(chunk_size=chunk_size, features=features, ff_mult=ff_mult))
+            self.encoder_layers.append(MegaEncoderLayer(chunk_size=chunk_size, features=features, ff_mult=ff_mult, causal=causal))
 
     @tf.function
     def call(self, inputs, *args, **kwargs):
@@ -497,23 +499,26 @@ class MegaDecoder(keras.layers.Layer):
                  ff_mult,
                  depth,
                  out_feature,
-                 last_norm=True):
+                 last_norm=True,
+                 causal=True):
         super().__init__()
 
-        self.decoder_layers = []
+        self.decoder_layers_causal = []
         for _ in range(depth):
-            self.decoder_layers.append(MegaDecoderLayer(chunk_size=chunk_size, features=features, ff_mult=ff_mult))
+            self.decoder_layers_causal.append(MegaDecoderLayer(chunk_size=chunk_size, features=features, ff_mult=ff_mult, causal=causal))
         if last_norm:
             self.norm = keras.layers.LayerNormalization(axis=-1)
         else:
             self.norm = identity
+        self.output_projection = keras.Sequential()
+        # self.output_projection.add(keras.layers.Dense(64, use_bias=True))
+        self.output_projection.add(keras.layers.Dense(out_feature, use_bias=False, kernel_initializer=tf.keras.initializers.RandomNormal(mean=0., stddev=features ** -0.5)))
 
-        self.output_projection = keras.layers.Dense(out_feature, use_bias=True,
-                                                    kernel_initializer=tf.keras.initializers.RandomNormal(mean=0., stddev=features ** -0.5))
     @tf.function
-    def call(self, x, context, *args, **kwargs):
-        x = x + context
-        for layer in self.decoder_layers:
+    def call(self, x, context=None, *args, **kwargs):
+        if context is not None:
+            x = x + context
+        for i, layer in enumerate(self.decoder_layers_causal):
             x = layer(x)
         x = self.output_projection(self.norm(x))
         return x
@@ -527,28 +532,32 @@ class MegaImputer(keras.Model):
         out_features=5,
         depth=8,
         chunk_size=-1,
-        ff_mult = 2,
+        ff_mult=2,
+        causal=False,
         **kwargs
     ):
         super().__init__()
         self.input_linear = keras.layers.Dense(mid_features)
-        self.encoder = MegaEncoder(chunk_size, mid_features, ff_mult, depth)
-        self.decoder = MegaDecoder(chunk_size, mid_features, ff_mult, out_feature=out_features, depth=depth)
+        self.encoder = MegaEncoder(chunk_size, mid_features, ff_mult, depth, causal=causal)
+        self.decoder = MegaDecoder(chunk_size, mid_features, ff_mult, out_feature=out_features, depth=depth, causal=causal)
+        # self.norm = keras.layers.LayerNormalization(axis=-1)
 
     @tf.function
     def call(self, x):
-        # x shape: B L H
+        # x shape: B H L
         conditional, mask = x
         conditional = conditional * mask
-        x = conditional
+        conditional = tf.concat([conditional, mask], axis=1)
+        x = rearrange(conditional, 'b h l -> b l h')
         x = self.input_linear(x)
         encoder_out = self.encoder(x)
-        y = self.decoder(x, encoder_out)
-        return y
+        y = self.decoder(encoder_out)
+        # y = self.norm(y)
+        return rearrange(y, 'b l h -> b h l')
 
     def compute_loss(self, x=None, y=None, y_pred=None, sample_weight=None):
 
-        return self.compiled_loss(y[sample_weight], y_pred[sample_weight])
+        return self.compiled_loss(y, y_pred)
 
     def train_step(self, data):
         x, y = data
@@ -558,7 +567,7 @@ class MegaImputer(keras.Model):
         # Run forward pass.
         with tf.GradientTape() as tape:
             y_pred = self(x, training=True)
-            loss = self.compute_loss(x, y, y_pred, loss_mask)
+            loss = self.compute_loss(x, y[loss_mask], y_pred[loss_mask])
         self._validate_target_and_loss(y, loss)
         # Run backwards pass.
         self.optimizer.minimize(loss, self.trainable_variables, tape=tape)
@@ -569,7 +578,7 @@ class MegaImputer(keras.Model):
         conditional, mask, loss_mask = x
         x = (conditional, mask)
         y_pred = self(x, training=True)
-        self.compute_loss(x, y, y_pred, loss_mask)
+        self.compute_loss(x, y[loss_mask], y_pred[loss_mask])
         return self.compute_metrics(x, y[loss_mask], y_pred[loss_mask], sample_weight=None)
 
 

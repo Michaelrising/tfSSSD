@@ -209,14 +209,14 @@ def sampling(net, diffusion_hyperparams, only_generate_missing, cond, mask, num_
         current_sample = current_sample_generator(sample_i)
         imputed_samples.append(current_sample) # = imputed_samples.write(sample_i, current_sample)
         sample_i += 1
-        if sample_i % 2 == 0 and sample_i > 0:
-            pbar.update(2)
+        # if sample_i % 2 == 0 and sample_i > 0:
+        pbar.update(1)
     return tf.stack(imputed_samples)
 
 
 # @tf.function
 def imputer(net, T, Alpha, Alpha_bar, Sigma, size, only_generate_missing, cond, mask):
-    # pbar = tqdm(total=T)
+    pbar = tqdm(total=T)
     t = T - 1
     # current_sample = tf.TensorArray(dtype=tf.float32, size=1, clear_after_read=False)
     # current_sample = current_sample.write(0, tf.random.normal(size, dtype=cond.dtype))
@@ -235,7 +235,8 @@ def imputer(net, T, Alpha, Alpha_bar, Sigma, size, only_generate_missing, cond, 
         # add the variance term to x_{t-1}
 
         t -= 1
-        # pbar.update(1)
+        if t % 5 == 0:
+            pbar.update(5)
     return current_sample
 
 

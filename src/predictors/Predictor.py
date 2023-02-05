@@ -1,6 +1,8 @@
 import tensorflow as tf
 from tensorflow import keras
 import numpy as np
+import os
+import json
 import matplotlib.pyplot as plt
 from imputers.SSSDImputer import SSSDImputer
 from imputers.MegaModel import MegaImputer
@@ -11,15 +13,17 @@ class Predictor:
     def __init__(self,
                  model_path,
                  log_path,
-                 in_channels=2,
-                 out_channels=2,
+                 in_channels=5,
+                 out_channels=5,
                  model=None,
                  *args,
                  **kwargs):
         self.model_path = model_path
         self.log_path = log_path
+        self.in_channels = in_channels
+        self.out_channels = out_channels
 
-        if model == 'sssd':
+        if model == 'sssd-s4':
             self.model = self.construct_sssd_s4(in_channels=in_channels,
                                                 out_channels=out_channels)
         elif model == 'mega':
@@ -30,14 +34,14 @@ class Predictor:
     def train(self,
               data_path,
               lr=1e-3,
-              amsgrad=True,
+              amsgrad=False,
               batch_size=64,
               epochs=50,
               seq_len=200,
               infer_flag=False):
 
         # define optimizer
-        optimizer = keras.optimizers.Adam(learning_rate=lr, epsilon=1e-6, clipnorm=0.5, amsgrad=amsgrad)
+        optimizer = keras.optimizers.Adam(learning_rate=lr, epsilon=1e-6, amsgrad=amsgrad)
         # define loss
         loss = keras.losses.MeanSquaredError()
         # define callback
@@ -53,14 +57,14 @@ class Predictor:
             save_format='tf'
         )
 
-        training_data, training_mask = self.prepare_data(data_path, seq_len)
+        training_data, training_mask, loss_mask = self.prepare_data(data_path, seq_len)
         print('Data loaded')
         # prepare X
 
         L, N, K = training_data.shape  # C is the dimension of each audio, L is audio length, N is the audio batch
         print("missing rate:" + str(1 - np.sum(training_mask) / (N * K * L)))
 
-        X, Y = self.prepare_x_y(training_data, training_mask)
+        X, Y = self.prepare_x_y(training_data, training_mask, loss_mask)
 
         if not infer_flag:
             self.model.compile(optimizer=optimizer, loss=loss)
@@ -88,6 +92,7 @@ class Predictor:
         # prepare data set
         training_data = []
         training_mask = []
+        loss_mask = []
         for ticker in ['DJ', 'ES', 'SE']:
             data_name = "/generated_scaled_" + ticker + '_all_stocks_2013-01-02_to_2023-01-01.npy'
             ticker_data = np.load(data_path + data_name, allow_pickle=True).astype(np.float32)  # L N C
@@ -99,25 +104,38 @@ class Predictor:
                     mask_chunk = np.ones_like(ticker_chunk)
                     mask_chunk[-1] = np.zeros_like(ticker_chunk[0])
                 training_data.append(ticker_chunk)
+                loss_mask.append(mask_chunk)
+                mask_chunk = np.ones_like(ticker_chunk)
+                mask_chunk[-1] = np.zeros_like(ticker_chunk[0])
                 training_mask.append(mask_chunk)
         training_data = np.concatenate(training_data, axis=1).astype(float)  # L B K
         training_mask = np.concatenate(training_mask, axis=1).astype(np.float32)  # L B K
-        training_all = np.concatenate((training_data.transpose([1, 0, 2]), training_mask.transpose([1, 0, 2])),
+        loss_mask = np.concatenate(loss_mask, axis=1).astype(bool)
+        training_all = np.concatenate((training_data.transpose([1, 0, 2]), training_mask.transpose([1, 0, 2]), loss_mask.transpose([1, 0, 2])),
                                       axis=-1)  # B L 2*K
         # shuffle data
         np.random.shuffle(training_all)
         training_data = training_all[..., :5].transpose([1, 0, 2])  # L B K
-        training_mask = training_all[..., 5:].transpose([1, 0, 2])  # L B K
-        print('Loading stocks data: ' + ticker)
+        training_mask = training_all[..., 5:10].transpose([1, 0, 2])  # L B K
+        loss_mask = training_all[..., 10:].transpose([1, 0, 2])  # L B K
+        print('Loading stocks data, Done!')
         print(training_data.shape)
-        return training_data, training_mask
+        return training_data, training_mask, np.logical_not(loss_mask)
 
-    def prepare_x_y(self, training_data, training_mask):
+    def prepare_x_y(self, training_data, training_mask, loss_mask=None):
+        training_data = training_data[..., :self.in_channels]
+        training_mask = training_mask[..., :self.in_channels]
+        if loss_mask is None:
+            observed_mask = (~np.isnan(training_data)).astype(float)
+            loss_mask = tf.cast(1. - training_mask, tf.bool)
+        else:
+            loss_mask = loss_mask[..., :self.in_channels]
         training_data = tf.transpose(tf.convert_to_tensor(training_data, dtype=tf.float32),
                                      perm=[1, 2, 0])  # batch dim # L N C -> [N C L]
         training_mask = tf.transpose(tf.convert_to_tensor(training_mask, dtype=tf.float32),
                                      perm=[1, 2, 0])  # batch dim # L N C -> [N C L]
-        loss_mask = tf.cast(1.0 - training_mask, tf.bool)
+        loss_mask = tf.transpose(tf.convert_to_tensor(loss_mask, dtype=tf.bool),
+                                 perm=[1, 2, 0]) # batch dim # L N C -> [N C L]
         if isinstance(self.model, SSSDImputer):
             noise = tf.random.normal(shape=tf.shape(training_data), dtype=training_data.dtype)
             diffusion_steps = tf.random.uniform(shape=(tf.shape(training_data)[0], 1, 1), maxval=self.config['T'],
@@ -125,8 +143,9 @@ class Predictor:
             X = [noise, training_data, training_mask, loss_mask, diffusion_steps]
             Y = None
         elif isinstance(self.model, MegaImputer):
-            X = [training_data, training_mask, loss_mask]
-            Y = training_data
+            loss_mask = loss_mask #[:, :self.out_channels]
+            X = [training_data, training_mask, loss_mask] # B H L
+            Y = training_data #[:, :self.out_channels] # B H' L
         else:
             X, Y = None, None
         return X, Y
@@ -142,6 +161,7 @@ class Predictor:
                           skip_channels=256,
                           s4_lmax=200,
                           ):
+        print('======= Using Model {} to Predict ======='.format('SSSD-S4'))
 
         self.config = {}
         self.config["T"]= T
@@ -163,6 +183,16 @@ class Predictor:
         self.config["alg"] = 'S4'
         self.config["only_generate_missing"] = 1
 
+        if not os.path.exists(self.log_path):
+            os.mkdir(self.log_path)
+        if not os.path.exists(self.model_path):
+            os.mkdir(self.model_path)
+
+        config_filename = self.log_path + 'config_SSSD.json'
+        print('configuration file name:', config_filename)
+        with open(config_filename + ".json", "w") as f:
+            json.dump(self.config, f, indent=4)
+
         model = SSSDImputer(**self.config)
         return model
 
@@ -172,8 +202,10 @@ class Predictor:
                             mid_features=128,
                             depth=8,
                             chunk_size=-1,
-                            pre_norm=True
+                            pre_norm=True,
+                             causal=True
                             ):
+        print('======= Using Model {} to Predict ======='.format('Mega'))
 
         self.config = {}
         self.config['in_feature'] = in_feature
@@ -183,7 +215,16 @@ class Predictor:
         self.config['chunk_size'] = chunk_size
         self.config['ff_mult'] = 2
         self.config['pre_norm'] = pre_norm
+        self.config['causal'] = causal
         model = MegaImputer(**self.config)
+        if not os.path.exists(self.log_path):
+            os.mkdir(self.log_path)
+        if not os.path.exists(self.model_path):
+            os.mkdir(self.model_path)
+        config_filename = self.log_path + 'config_mega.json'
+        print('configuration file name:', config_filename)
+        with open(config_filename + ".json", "w") as f:
+            json.dump(self.config, f, indent=4)
 
         return model
 

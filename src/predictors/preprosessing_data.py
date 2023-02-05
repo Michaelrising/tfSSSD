@@ -3,18 +3,18 @@ from einops import rearrange, einsum
 from sklearn.preprocessing import MinMaxScaler
 from scipy.stats import norm
 import os
-
-save_path = '../../generation/stocks/CSDI-S4/20230203-074122_seq_len_800/'
+model = 'MEGA'
+save_path = '../../generation/stocks/MEGA/20230204-213934_seq_800/'
 if not os.path.exists(save_path):
     os.mkdir(save_path)
-train_log_dir = '../../log/stocks/all/CSDI-S4/20230203-074122_seq_800/'
-output_directory = '../../results/stocks/all/CSDI-S4/20230203-074122_seq_800/generated_samples'
+train_log_dir = '../../log/stocks/all/MEGA/20230204-213934_seq_800/'
+output_directory = '../../results/stocks/all/MEGA/20230204-213934_seq_800/generated_samples'
 seq_len = 800
 scaled_all_mae = []
 scaled_all_mse = []
 origin_all_mae = []
 origin_all_mse = []
-for ticker in ['ES', 'DJ', 'SE']:
+for ticker in ['ES', 'SE', 'DJ']:
     print('Generating ' + ticker)
     # ticker = 'SE'
     data_name = ticker + '_all_stocks_2013-01-02_to_2023-01-01.npy'
@@ -33,7 +33,11 @@ for ticker in ['ES', 'DJ', 'SE']:
         data = imputed_data[i*num_tickers:(i+1)*num_tickers]
         # data = rearrange(data, 'b n l k -> n (b l ) k', l=seq_len) # num_samples L=2400 K
         generated_data.append(data) # B N L K
-    generated_data = np.concatenate(generated_data, axis=2) # B N L K L=2400
+    if model == 'SSSD' or 'MEGA':
+        generated_data = np.concatenate(generated_data, axis=-1)  # B N L K L=2400
+        generated_data = rearrange(generated_data, ' b n k l -> b n l k')
+    else:
+        generated_data = np.concatenate(generated_data, axis=2) # B N L K L=2400
     generated_data = rearrange(generated_data, ' b n l k -> n l b k')
     scaled_ticker_data = scaled_ticker_data[:length]
     ticker_data = ticker_data[:length]

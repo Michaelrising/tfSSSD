@@ -1,9 +1,11 @@
-from imputers.CSDIImputer import *
+from imputers.CSDIImputer_1 import *
+from imputers.CSDIImputer import CDSIimputer
 import os
 import argparse
 from einops import rearrange
 from sklearn.preprocessing import MinMaxScaler
 import sys
+import json
 
 if __name__ == "__main__":
 
@@ -60,7 +62,7 @@ if __name__ == "__main__":
 
     config = json.loads(data)
 
-    CSDIImputer = CSDIImputer(model_path,
+    CSDI = CSDI(model_path,
                               log_path,
                               config_path,
                               masking=args.masking,
@@ -69,12 +71,12 @@ if __name__ == "__main__":
                               target_strategy=args.target_strategy,
                               amsgrad=args.amsgrad,
                               training=False)
-    CSDIImputer.model = tfCSDI(5, config)
-    CSDIImputer.model.load_weights(model_path).expect_partial()
+    CSDI.model = CDSIimputer(5, config)
+    CSDI.model.load_weights(model_path).expect_partial()
     ## Custom data loading and reshaping ###
     # prepare X and Y for model.fit()
 
-    for ticker in ['ES', 'SE']:
+    for ticker in ['ES', 'SE', 'DJ']:
         eval_data = []
         eval_mask = []
         # ticker = 'SE'
@@ -95,7 +97,7 @@ if __name__ == "__main__":
         eval_mask = np.concatenate(eval_mask, axis=1).transpose([1, 2, 0])  # L N C -> N L C
         print("Loaded Data from:{}".format(target_file))
         # training_data = rearrange(tf.convert_to_tensor(observed_data[:16]), 'b l k -> b k l')
-        imputed_data = CSDIImputer.imputer(sample=eval_data, gt_mask=eval_mask, n_samples=args.n_samples, ticker=ticker)
+        imputed_data = CSDI.imputer(sample=eval_data, gt_mask=eval_mask, n_samples=args.n_samples, ticker=ticker)
         # imputations = imputed_data.stack()  # int(sample.shape[0]/self.batch_size) * n_samples * B * L * K
         np.save(generated_path + '/' + ticker +'/imputed_all_data.npy', imputed_data)
 

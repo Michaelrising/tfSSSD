@@ -5,9 +5,9 @@ from .CSDI_base import *
 ''' Standalone CSDI imputer. The imputer class is located in the last part of the notebook, please see more documentation there'''
 
 
-class CDSIImputer(keras.Model):
+class CSDIImputer(keras.Model):
     def __init__(self, config):
-        super().__init__()
+        super(CSDIImputer, self).__init__()
         self.loss_fn = None
         self.optimizer = None
         self.target_dim = config["model"]["target_dim"]
@@ -15,7 +15,6 @@ class CDSIImputer(keras.Model):
         self.emb_time_dim = config["model"]["timeemb"]
         self.emb_feature_dim = config["model"]["featureemb"]
         self.is_unconditional = config["model"]["is_unconditional"]
-        self.target_strategy = config["model"]["target_strategy"]
         self.algo = config['diffusion']['time_layer']
 
         self.emb_total_dim = self.emb_time_dim + self.emb_feature_dim
@@ -47,8 +46,8 @@ class CDSIImputer(keras.Model):
     def metrics(self):
         return [self.loss_tracker]
 
-    def compile(self, optimizer):
-        super().compile()
+    def compile(self, optimizer, loss=None):
+        super(CSDIImputer, self).compile()
         self.optimizer = optimizer
         self.loss_fn = self.compute_loss
 

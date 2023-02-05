@@ -5,7 +5,7 @@ from tensorflow import keras
 from utils.util import calc_diffusion_step_embedding
 from imputers.S4Model import S4Layer
 from imputers.S5Model import S5Layer
-from imputers.MegaModel import Mega, MegaLayer
+from imputers.MegaModel import Mega, MegaLayer, MegaEncoderLayer
 import numpy as np
 from einops import rearrange
 
@@ -84,8 +84,8 @@ class Residual_block(keras.Model):
             self.SSM1 = S5Layer(ssm_size=s4_d_state * 4, features=2 * self.res_channels) # ssm_size has Order(H) feature is 512
             self.SSM2 = S5Layer(ssm_size=s4_d_state * 4, features=2 * self.res_channels) # then we set ssm_size as 256
         elif alg == 'Mega':
-            self.SSM1 = MegaLayer(features=2 * self.res_channels, chunk_size=40, laplacian_attn_fn = True,causal = False)
-            self.SSM2 = MegaLayer(features=2 * self.res_channels, chunk_size=40, laplacian_attn_fn = True,causal = False)
+            self.SSM1 = MegaEncoderLayer(features=2 * self.res_channels, chunk_size=-1, ff_mult=2)
+            self.SSM2 = MegaEncoderLayer(features=2 * self.res_channels, chunk_size=-1, ff_mult=2)
 
         self.conv_layer = Conv(self.res_channels, 2 * self.res_channels, kernel_size=3)
 
