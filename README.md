@@ -1,5 +1,8 @@
 # tfSSSD
-Tensorflow version of SSSD
+Part1: Tensorflow version of SSSD of Paper Diffusion-based Time Series Imputation and Forecasting with Structured State Space Models, the official GitHub page is:https://github.com/AI4HealthUOL/SSSD. 
+
+# tfMega
+Part2: Tensorflow version of Mega of Paper Mega: Moving Average Equipped Gated Attention, the official GitHub page is:https://github.com/facebookresearch/mega
 
 ## How to run codes
 
