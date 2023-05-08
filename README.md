@@ -5,6 +5,6 @@ Tensorflow version of SSSD
 
 1. run train_imputers.py to train SSSD/CSDI/Mega for imputations.  
 
-2 run evaluate_sssd/csdi/mega.py to genegrate and evaluate the missing data results.
+2. run evaluate_sssd/csdi/mega.py to genegrate and evaluate the missing data results.
 
 3. run predict.py to do the predcition 
